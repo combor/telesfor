@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/telesfor.svg" width="128" height="128" alt="Telesfor, a smiling dragon holding a blue flower">
+  <img src="docs/images/telesfor.png" width="128" height="128" alt="Telesfor, a friendly little dragon holding a blue flower">
 </p>
 
 <h1 align="center">telesfor</h1>

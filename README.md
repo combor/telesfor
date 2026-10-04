@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/images/telesfor.png" width="104" height="104" alt="telesfor logo: a coral dragon silhouette inside a television screen">
-</p>
-
 <h1 align="center">telesfor</h1>
 
 <p align="center">

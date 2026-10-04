@@ -99,7 +99,15 @@ API, which CI does daily:
 TELESFOR_LIVE=1 go test -count=1 -v -run TestLive ./internal/provider/tvp
 ```
 
+To test the container image, which CI also does on every push:
+
+```sh
+docker build -t telesfor:smoke .
+TELESFOR_SMOKE_IMAGE=telesfor:smoke go test -count=1 -run TestContainerServesLineup ./cmd/telesfor
+```
+
 ## Releases
 
 Push a tag that starts with `v`, such as `v0.1.0`. Once the checks pass, CI
-builds the archives with GoReleaser and publishes them as a GitHub release.
+builds the archives with GoReleaser and publishes them as a GitHub release,
+then pushes the container image to `ghcr.io/combor/telesfor`.

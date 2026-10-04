@@ -15,6 +15,7 @@ Use command-line flags or environment variables. Flags take precedence.
 | `-tvp-proxy` | `TELESFOR_TVP_PROXY` | Unset | HTTP proxy for TVP's channel list, guide and streams. |
 | `-debug` | `TELESFOR_DEBUG` | Off | Log requests, upstream fetches and ffmpeg warnings. |
 | `-version` | | | Print the version and exit. |
+| `-healthcheck` | | | Check that the telesfor at the listen address answers, and exit. |
 
 Any nonempty value of `TELESFOR_DEBUG` enables debug logging, including `0`
 or `false`. Leave it unset to keep debug logging off, or pass `-debug=false`.
@@ -54,6 +55,21 @@ go build ./cmd/telesfor
 
 Add `-tvp-proxy` if you need a Polish connection. Go is only needed to build
 telesfor; ffmpeg is needed whenever it runs.
+
+## Docker
+
+The image includes ffmpeg and is configured with the environment variables
+above:
+
+```sh
+docker run -d --name telesfor --restart unless-stopped -p 5004:5004 \
+  -e TELESFOR_TVP_PROXY='http://<proxy-host>:<port>' \
+  ghcr.io/combor/telesfor:latest
+```
+
+Leave out the `-e` line if you do not need a proxy. To change the listen
+address, set `TELESFOR_LISTEN` rather than `-listen`: the image's health check
+cannot read flags.
 
 ## Troubleshooting
 

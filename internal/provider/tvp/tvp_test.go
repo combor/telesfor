@@ -107,7 +107,8 @@ func TestProgrammes(t *testing.T) {
 		// Every window returns the same two programmes, as the API does for a
 		// programme that spans two windows.
 		io.WriteString(w, `[
-			{"id": 1, "title": "Teleexpress", "lead": "News", "since": "2026-10-03T17:00:00+02:00", "till": "2026-10-03T17:20:00+02:00", "live": {"id": 399697}},
+			{"id": 1, "title": "Teleexpress", "lead": "News", "since": "2026-10-03T17:00:00+02:00", "till": "2026-10-03T17:20:00+02:00", "live": {"id": 399697},
+			 "images": {"16x9": [{"url": "//s.tvp.pl/wide.jpg"}], "3x4": [{"url": "//s.tvp.pl/upright.jpg"}]}},
 			{"id": 2, "title": "Film", "lead": "A film", "description": "A long film", "since": "2026-10-03T23:00:00+02:00", "till": "2026-10-04T01:30:00+02:00", "live": {"id": 399698}}
 		]`)
 	})
@@ -138,6 +139,9 @@ func TestProgrammes(t *testing.T) {
 	}
 	if got[0].ChannelID != "399697" || got[0].Title != "Teleexpress" || got[0].Description != "News" {
 		t.Errorf("first programme = %+v, want Teleexpress on 399697 described by its lead", got[0])
+	}
+	if got[0].Image != "https://s.tvp.pl/upright.jpg" || got[1].Image != "" {
+		t.Errorf("programme images = %q and %q, want the first's upright one and none for the second", got[0].Image, got[1].Image)
 	}
 	if got[1].Description != "A long film" {
 		t.Errorf("second programme description = %q, want the full description", got[1].Description)

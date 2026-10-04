@@ -7,14 +7,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/combor/telesfor/internal/provider"
 )
 
-// fake is a provider with two channels and one guide entry. Its channels can
-// be tuned only when it has signal.
+// fake is a provider with two channels and a guide entry for each. Its
+// channels can be tuned only when it has signal.
 type fake struct{ signal bool }
 
 func (fake) Name() string { return "fake" }
@@ -29,7 +30,8 @@ func (fake) Channels(context.Context) ([]provider.Channel, error) {
 func (fake) Programmes(context.Context, []provider.Channel, time.Time, time.Time) ([]provider.Programme, error) {
 	start := time.Date(2026, 10, 3, 17, 35, 0, 0, time.FixedZone("CEST", 2*60*60))
 	return []provider.Programme{
-		{ChannelID: "two", Title: "News", Description: "The day's news", Start: start, Stop: start.Add(45 * time.Minute)},
+		{ChannelID: "two", Title: "News", Description: "The day's news", Image: "https://example.com/news.jpg", Start: start, Stop: start.Add(45 * time.Minute)},
+		{ChannelID: "one", Title: "Film", Start: start, Stop: start.Add(45 * time.Minute)},
 		{ChannelID: "gone", Title: "On a channel that is not in the lineup"},
 	}, nil
 }
@@ -108,15 +110,21 @@ func TestGuide(t *testing.T) {
 		t.Error("a channel without a logo must have no icon")
 	}
 
-	want := xmlProgramme{
-		Start:   "20261003173500 +0200",
-		Stop:    "20261003182000 +0200",
-		Channel: "2", // the lineup number of channel "two"
-		Title:   "News",
-		Desc:    "The day's news",
+	start, stop := "20261003173500 +0200", "20261003182000 +0200"
+	want := []xmlProgramme{
+		{
+			Start:   start,
+			Stop:    stop,
+			Channel: "2", // the lineup number of channel "two"
+			Title:   "News",
+			Desc:    "The day's news",
+			Icon:    &xmlIcon{"https://example.com/news.jpg"},
+		},
+		// A programme without an image must have no icon.
+		{Start: start, Stop: stop, Channel: "1", Title: "Film"},
 	}
-	if len(guide.Programmes) != 1 || guide.Programmes[0] != want {
-		t.Errorf("guide programmes = %+v, want only %+v", guide.Programmes, want)
+	if !reflect.DeepEqual(guide.Programmes, want) {
+		t.Errorf("guide programmes = %s, want only the two on lineup channels, the first with an icon", response.Body)
 	}
 }
 

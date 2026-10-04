@@ -41,6 +41,7 @@ type Programme struct {
 	ChannelID   string
 	Title       string
 	Description string
+	Image       string // URL of the programme's poster; optional
 	Start, Stop time.Time
 }
 

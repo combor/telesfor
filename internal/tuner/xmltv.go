@@ -33,11 +33,12 @@ type (
 		Src string `xml:"src,attr"`
 	}
 	xmlProgramme struct {
-		Start   string `xml:"start,attr"`
-		Stop    string `xml:"stop,attr"`
-		Channel string `xml:"channel,attr"`
-		Title   string `xml:"title"`
-		Desc    string `xml:"desc,omitempty"`
+		Start   string   `xml:"start,attr"`
+		Stop    string   `xml:"stop,attr"`
+		Channel string   `xml:"channel,attr"`
+		Title   string   `xml:"title"`
+		Desc    string   `xml:"desc,omitempty"`
+		Icon    *xmlIcon `xml:"icon"`
 	}
 )
 
@@ -78,13 +79,17 @@ func (t *Tuner) xmltv(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				continue
 			}
-			guide.Programmes = append(guide.Programmes, xmlProgramme{
+			p := xmlProgramme{
 				Start:   programme.Start.Format(xmltvTime),
 				Stop:    programme.Stop.Format(xmltvTime),
 				Channel: number,
 				Title:   programme.Title,
 				Desc:    programme.Description,
-			})
+			}
+			if programme.Image != "" {
+				p.Icon = &xmlIcon{programme.Image}
+			}
+			guide.Programmes = append(guide.Programmes, p)
 		}
 	}
 

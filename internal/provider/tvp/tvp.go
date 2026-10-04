@@ -28,6 +28,19 @@ const (
 	guideTime = "2006-01-02T15:04-0700"
 )
 
+// images are the pictures the API attaches to a channel or a programme, keyed
+// by aspect ratio, such as "3x4".
+type images map[string][]struct{ URL string }
+
+// url returns the address of the picture of the given aspect ratio, or "" when
+// there is none.
+func (i images) url(ratio string) string {
+	if len(i[ratio]) == 0 {
+		return ""
+	}
+	return "https:" + i[ratio][0].URL // the API leaves the scheme out: //s.tvp.pl/…
+}
+
 // Provider streams TVP's live channels.
 type Provider struct {
 	api    string
@@ -67,7 +80,7 @@ func (p *Provider) Channels(ctx context.Context) ([]provider.Channel, error) {
 			Payable       bool
 			LoginRequired bool
 			LiveType      string
-			LogoImages    map[string][]struct{ URL string }
+			LogoImages    images
 		}
 	}
 	if err := p.get(ctx, "/lives", url.Values{"lang": {"PL"}}, &lives); err != nil {
@@ -80,11 +93,11 @@ func (p *Provider) Channels(ctx context.Context) ([]provider.Channel, error) {
 		if live.Payable || live.LoginRequired || live.LiveType == "FAST" {
 			continue
 		}
-		channel := provider.Channel{ID: strconv.Itoa(live.ID), Name: live.Title}
-		if logos := live.LogoImages["1x1"]; len(logos) > 0 {
-			channel.Logo = "https:" + logos[0].URL // the API leaves the scheme out: //s.tvp.pl/…
-		}
-		channels = append(channels, channel)
+		channels = append(channels, provider.Channel{
+			ID:   strconv.Itoa(live.ID),
+			Name: live.Title,
+			Logo: live.LogoImages.url("1x1"),
+		})
 	}
 	return channels, nil
 }
@@ -111,6 +124,7 @@ func (p *Provider) Programmes(ctx context.Context, channels []provider.Channel, 
 			Title       string
 			Description string
 			Lead        string // a shorter description
+			Images      images
 			Since, Till time.Time
 			Live        struct{ ID int }
 		}
@@ -126,6 +140,7 @@ func (p *Provider) Programmes(ctx context.Context, channels []provider.Channel, 
 				ChannelID:   strconv.Itoa(item.Live.ID),
 				Title:       item.Title,
 				Description: cmp.Or(item.Description, item.Lead),
+				Image:       item.Images.url("3x4"), // upright, like the posters Plex shows
 				Start:       item.Since,
 				Stop:        item.Till,
 			})

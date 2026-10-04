@@ -1,168 +1,90 @@
-# telesfor
+<p align="center">
+  <img src="docs/images/telesfor.svg" width="128" height="128" alt="Telesfor, a smiling dragon holding a blue flower">
+</p>
 
-A virtual TV tuner for Plex. telesfor presents live TV from streaming providers
-as an HDHomeRun network tuner, so Plex's Live TV & DVR can show, pause and
-record it.
+<h1 align="center">telesfor</h1>
 
-TV sources plug in as providers. The first one is **TVP**, the Polish public
-broadcaster.
+<p align="center">
+  <strong>Live TV from streaming services, in Plex.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/combor/telesfor/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/combor/telesfor/ci.yml?branch=main&amp;event=push&amp;style=flat-square&amp;label=CI" alt="CI status"></a>
+  <a href="https://github.com/combor/telesfor/releases"><img src="https://img.shields.io/github/v/release/combor/telesfor?style=flat-square" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-BSD--3--Clause-blue?style=flat-square" alt="License: BSD-3-Clause"></a>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#connect-plex">Connect Plex</a> ·
+  <a href="docs/usage.md#configuration">Configuration</a> ·
+  <a href="docs/usage.md#troubleshooting">Troubleshooting</a>
+</p>
+
+telesfor turns streaming channels into a virtual HDHomeRun tuner. Watch,
+pause and record through Plex's Live TV & DVR, with a TV guide built in.
+No tuner hardware is needed.
 
 ## What you get
 
-- About 40 TVP channels: TVP 1, TVP 2, TVP Info, TVP Sport, TVP Kultura,
-  TVP Historia, TVP ABC, the regional TVP3 stations and more, in the quality
-  TVP streams them (up to 1080p, no transcoding).
-- A TV guide straight from TVP, 48 hours ahead.
+- **TVP channels.** TVP 1, TVP 2, TVP Info, TVP Sport, TVP Kultura,
+  the regional TVP3 stations and more.
+- **A 48-hour TV guide.** Programme listings come straight from TVP.
+- **Original stream quality.** Up to 1080p, without transcoding in telesfor.
 
-TVP blocks most of its channels outside Poland. From abroad you need an HTTP
-proxy with a Polish exit; without one only TVP Info, TVP Polonia and TVP World
-play. Channels that need a subscription (TVP Seriale, TVP HD) are left out, and
-the few that are DRM-encrypted cannot be played.
+> [!NOTE]
+> Most TVP channels need a Polish connection. From abroad, use an HTTP proxy
+> with a Polish exit. Paid and DRM-protected channels are not supported.
 
-## Requirements
+## Quick start
 
-- `ffmpeg` on `PATH`
-- Plex Media Server with Live TV & DVR, which needs a Plex Pass
+You need **Plex Media Server with a Plex Pass**, and **ffmpeg** installed on
+the machine running telesfor. Check that `ffmpeg -version` works in your terminal.
 
-## Run
+**1. Download telesfor.** Get the archive for your system from
+[Releases](https://github.com/combor/telesfor/releases) and unpack it.
+To build it yourself, see [Build from source](docs/usage.md#build-from-source).
 
-Download the archive for your system from the
-[releases](https://github.com/combor/telesfor/releases), unpack it and start
-telesfor:
-
-```sh
-./telesfor -tvp-proxy http://<proxy-host>:<port>
-```
-
-Or build it yourself, with a recent Go toolchain:
+**2. Start it.** Open a terminal in the unpacked folder and run:
 
 ```sh
-go build ./cmd/telesfor
+./telesfor
 ```
 
-| Flag         | Environment          | Default | Meaning                                                    |
-|--------------|----------------------|---------|------------------------------------------------------------|
-| `-listen`    | `TELESFOR_LISTEN`    | `:5004` | address to listen on                                       |
-| `-tvp-proxy` | `TELESFOR_TVP_PROXY` | none    | HTTP proxy for all TVP traffic                             |
-| `-debug`     | `TELESFOR_DEBUG`     | off     | also log every request, upstream fetch and ffmpeg warning |
-| `-version`   |                      |         | print the version and exit                                 |
-
-## Add it to Plex
-
-1. Open Settings → Live TV & DVR and set up a new DVR.
-2. Plex does not find telesfor on its own. Enter the tuner's address by hand:
-   `http://<telesfor-host>:5004`.
-3. Continue once Plex has listed the channels.
-4. For the guide, choose XMLTV and give `http://<telesfor-host>:5004/xmltv.xml`.
-5. Check the channel mapping and finish.
-
-## How it works
-
-```
-Plex ── /discover.json, /lineup.json, /xmltv.xml ──▶ tuner ──▶ provider ◀── tvp
-Plex ── GET /stream/tvp/399697 ──▶ tuner
-                                     │ 1. the provider resolves the channel to an HLS URL
-                                     │ 2. ffmpeg remuxes it to MPEG-TS, reading through the relay
-                                     │ 3. the relay fetches with the provider's HTTP client
-Plex ◀──────────── MPEG-TS ──────────┘ 4. ffmpeg's output is the response
-```
-
-| Package                 | Job                                                         |
-|-------------------------|-------------------------------------------------------------|
-| `internal/provider`     | the contract every TV source implements                     |
-| `internal/provider/tvp` | TVP: channels, guide, streams                               |
-| `internal/remux`        | ffmpeg stream copy to MPEG-TS, fed through a loopback relay |
-|                         | that repairs timestamps, and trimmed to start where all its |
-|                         | streams have started                                        |
-| `internal/tuner`        | HDHomeRun emulation and the XMLTV guide                     |
-| `cmd/telesfor`          | wiring                                                      |
-
-**Why a relay?** Providers hand out stream URLs that only work from the address
-that asked for them, so the stream has to leave through the same proxy as the
-API calls. ffmpeg cannot be trusted with that: it fails to tunnel HTTPS through
-some HTTP proxies (gluetun's, for one). So ffmpeg never touches the network.
-Every server a stream comes from gets a twin on loopback: ffmpeg reads
-`http://127.0.0.1:<port>/…`, and the relay fetches the same path from the real
-server with the provider's own HTTP client. Each provider can therefore have
-its own proxy, headers or cookies, and ffmpeg needs to know about none of them.
-
-**Why trim the start?** A stream whose audio and video come as separate
-playlists, like TVP's, sometimes begins with a few seconds of video and no
-sound. Players cope; Plex gives up on the channel ("Could not tune channel").
-So telesfor passes ffmpeg's output on only from the point where every stream
-has started, beginning at a keyframe.
-
-**Why repair timestamps?** On a handful of channels, TVP stamps frames to be
-decoded after they are due on screen, which cannot be done. ffmpeg replaces
-those times with guesses, and writes a stream that is decoded in fits and
-starts. So the relay moves the decoding times of such segments back into order
-before ffmpeg reads them. Segments with sound timestamps pass through
-untouched.
-
-**Why start behind the live edge?** A live stream arrives a segment at a time,
-and ffmpeg finds each new segment a little later than the one before, until it
-is a whole segment behind and catches up. Plex keeps a few seconds of what it
-receives back from its player, and shows a spinner when the player runs dry.
-So telesfor joins a stream six segments behind its newest (12 s on most TVP
-channels, 24 s on the rest) and hands those over at once: the player starts
-with that much in hand. The price is a picture that much further behind the
-broadcast.
-
-## Reading the log
-
-Every time a channel is tuned, telesfor logs three lines:
-
-```
-INFO tuning channel="TVP 1" viewer=127.0.0.1:53422
-INFO on air channel="TVP 1" startup=1.9s
-INFO released channel="TVP 1" after=24m3s sent=861.5MB
-```
-
-`startup` is how long the viewer waited for the first byte, and the last line
-says how long the session lasted and how much was sent. A session that ends
-seconds after going on air is one the viewer gave up on. If the viewer leaves
-before anything was sent, the last line is a warning instead, and a channel
-that cannot be tuned at all is an error with the reason.
-
-Run with `-debug` to also see each request Plex makes, each file fetched from
-the provider with its size and timing, and ffmpeg's own warnings. A few of
-those are part of every tune: `Packet corrupt` and `Invalid NAL unit size`
-right after `on air` are ffmpeg dropping the qualities it will not use, in the
-middle of a frame.
-
-## Adding a provider
-
-Implement the four methods of `provider.Provider` in a package under
-`internal/provider`:
-
-```go
-type Provider interface {
-    Name() string
-    Channels(ctx context.Context) ([]Channel, error)
-    Programmes(ctx context.Context, channels []Channel, from, to time.Time) ([]Programme, error)
-    Stream(ctx context.Context, channelID string) (Source, error)
-}
-```
-
-Then add it to the list in `cmd/telesfor/main.go`. Its channels join the lineup
-after those of the providers before it.
-
-## Development
+If you need a Polish proxy, start with its address instead:
 
 ```sh
-go vet ./... && go test ./...
+./telesfor -tvp-proxy 'http://<proxy-host>:<port>'
 ```
 
-CI runs the same on every push, with ffmpeg installed and the race detector on,
-and checks for known vulnerabilities.
+Replace the proxy placeholder with your proxy's address. On Windows, use
+`.\telesfor.exe` in place of `./telesfor`.
 
-The tests run on recorded responses. To check the provider against TVP's real
-API, which CI does daily:
+telesfor listens on port **5004**. Keep it running while you set up Plex,
+watch TV or record programmes.
 
-```sh
-TELESFOR_LIVE=1 go test -count=1 -v -run TestLive ./internal/provider/tvp
-```
+## Connect Plex
 
-To release, push a tag that starts with `v`, such as `v0.1.0`. Once the checks
-pass, CI builds the archives with GoReleaser and publishes them as a GitHub
-release.
+Use the IP address or hostname of the machine running telesfor wherever you
+see `<telesfor-host>`. It must be reachable from Plex Media Server.
+
+1. In Plex, open **Settings → Live TV & DVR** and set up a new DVR.
+2. Add the tuner manually as `http://<telesfor-host>:5004`.
+   Plex does not discover telesfor automatically.
+3. Once the channels appear, choose an **XMLTV** guide and enter
+   `http://<telesfor-host>:5004/xmltv.xml`.
+4. Check the channel mapping and finish setup.
+
+Your channels and guide are now available in Plex's **Live TV** section.
+
+## Documentation
+
+- [Configuration](docs/usage.md#configuration): change the port, proxy or logging.
+- [Troubleshooting](docs/usage.md#troubleshooting): help with setup, channels and the guide.
+- [Development](docs/development.md): how streaming works, tests and adding a provider.
+
+Found a bug or missing something? [Open an issue](https://github.com/combor/telesfor/issues).
+
+## License
+
+[BSD-3-Clause](LICENSE).

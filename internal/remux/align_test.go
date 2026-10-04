@@ -66,6 +66,7 @@ var (
 	more  = packet(videoPID, false, false, 'm') // more of a frame
 	aud1  = packet(audioPID, true, false, 'a', 1)
 	aud2  = packet(audioPID, true, false, 'a', 2)
+	rest  = packet(audioPID, false, false, 'r') // more of an audio frame
 )
 
 // names renders a stream packet by packet, to make a failed test readable.
@@ -99,24 +100,29 @@ func TestAligner(t *testing.T) {
 		in, want [][]byte
 	}{
 		{
-			name: "streams that start together pass untouched",
-			in:   [][]byte{pat, pmt, key1, more, aud1, frame, aud2},
-			want: [][]byte{pat, pmt, key1, more, aud1, frame, aud2},
+			name: "streams that start together: the output starts at the next keyframe, audio first",
+			in:   [][]byte{pat, pmt, key1, more, aud1, frame, aud2, more, key2, more, aud1},
+			want: [][]byte{pat, pmt, aud2, key2, more, aud1},
 		},
 		{
-			name: "video first: the output starts at the last keyframe before the audio",
-			in:   [][]byte{pat, pmt, key1, more, frame, key2, more, aud1, frame},
-			want: [][]byte{pat, pmt, key2, more, aud1, frame},
+			name: "video first: the output starts at the first keyframe after the audio",
+			in:   [][]byte{pat, pmt, key1, more, frame, key2, more, aud1, frame, key1, more},
+			want: [][]byte{pat, pmt, aud1, key1, more},
 		},
 		{
 			name: "audio first: the output starts at the first keyframe",
 			in:   [][]byte{pat, pmt, aud1, aud2, key1, aud1, more},
-			want: [][]byte{pat, pmt, key1, aud1, more},
+			want: [][]byte{pat, pmt, aud2, key1, aud1, more},
 		},
 		{
-			name: "video that begins between keyframes is kept from its start",
-			in:   [][]byte{pat, pmt, frame, more, aud1, key1},
-			want: [][]byte{pat, pmt, frame, more, aud1, key1},
+			name: "the audio in flight is kept whole, and audio cut off at its start is dropped",
+			in:   [][]byte{pat, pmt, rest, key1, aud1, rest, frame, aud2, rest, more, key2, rest, more},
+			want: [][]byte{pat, pmt, aud2, rest, key2, rest, more},
+		},
+		{
+			name: "video before its first keyframe is dropped",
+			in:   [][]byte{pat, pmt, frame, more, aud1, key1, more},
+			want: [][]byte{pat, pmt, aud1, key1, more},
 		},
 	}
 	for _, test := range tests {
@@ -217,10 +223,9 @@ func TestAlignerOnFFmpegOutput(t *testing.T) {
 	var out bytes.Buffer
 	newAligner(&out).Write(stream)
 
-	// The test stream has a keyframe every second, so the video may start that
-	// much before the audio, and no more.
-	if after := lag(out.Bytes()); after < -0.1 || after > 1.1 {
-		t.Errorf("after aligning, the audio starts %.2f s after the video; want them to start together", after)
+	// The audio must lead, by no more than what was in flight at the keyframe.
+	if after := lag(out.Bytes()); after > 0 || after < -0.5 {
+		t.Errorf("after aligning, the audio starts %.2f s after the video; want it to start just before", after)
 	}
 	if out.Len()%packetSize != 0 || out.Bytes()[0] != 0x47 {
 		t.Errorf("after aligning, the output of %d bytes is not whole MPEG-TS packets", out.Len())

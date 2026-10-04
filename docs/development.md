@@ -43,9 +43,11 @@ needing to know about them.
 ### Why trim the start?
 
 A stream with separate audio and video playlists, like TVP's, can begin with
-a few seconds of video and no sound. Plex may give up with "Could not tune
-channel". telesfor passes ffmpeg's output on only from the point where every
-stream has started, beginning at a keyframe.
+a few seconds of video and no sound, and even one that begins with both
+begins with video. Plex may give up with "Could not tune channel", or its
+remux for the player may crash. telesfor passes ffmpeg's output on from the
+first keyframe that the audio has started before, with that audio in front.
+This usually drops the first segment of the head start.
 
 ### Why repair timestamps?
 

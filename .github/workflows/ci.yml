@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: Vulnerability Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - id: govulncheck
+        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
+        with:
+          go-version-input: ''
+          go-version-file: go.mod
+          cache: false
+
+  test:
+    name: Lint & Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+          # telesfor has no dependencies, so there is no go.sum to key a cache on.
+          cache: false
+      # The remux tests skip themselves when ffmpeg cannot make their streams.
+      - name: Install ffmpeg for the remux tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffprobe -hide_banner -version
+          ffmpeg -hide_banner -encoders | grep -w mpeg2video
+          ffmpeg -hide_banner -encoders | grep -w mp2
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
+      - run: go vet ./...
+      - run: go test -race -cover ./...

@@ -143,3 +143,13 @@ after those of the providers before it.
 ```sh
 go vet ./... && go test ./...
 ```
+
+CI runs the same on every push, with ffmpeg installed and the race detector on,
+and checks for known vulnerabilities.
+
+The tests run on recorded responses. To check the provider against TVP's real
+API, which CI does daily:
+
+```sh
+TELESFOR_LIVE=1 go test -count=1 -v -run TestLive ./internal/provider/tvp
+```

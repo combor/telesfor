@@ -1,0 +1,44 @@
+# Settings: /etc/telesfor/telesfor.env. Use `systemctl edit telesfor` for unit
+# overrides; package updates overwrite this file.
+
+[Unit]
+Description=telesfor virtual TV tuner for Plex
+Documentation=https://github.com/combor/telesfor/blob/main/docs/usage.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+# telesfor keeps nothing on disk, so it needs no account of its own. This also
+# makes the system read-only to it and gives it a private /tmp.
+DynamicUser=true
+EnvironmentFile=/etc/telesfor/telesfor.env
+ExecStart=/usr/bin/telesfor
+Restart=on-failure
+RestartSec=10
+
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+PrivateDevices=true
+ProcSubset=pid
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+SocketBindAllow=tcp
+SocketBindDeny=any
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+
+[Install]
+WantedBy=multi-user.target

@@ -71,6 +71,28 @@ Leave out the `-e` line if you do not need a proxy. To change the listen
 address, set `TELESFOR_LISTEN` rather than `-listen`: the image's health check
 cannot read flags.
 
+## Packages
+
+Each of these installs ffmpeg too.
+
+| System | Install |
+|---|---|
+| Arch Linux | `telesfor-bin` from the AUR |
+| Debian, Ubuntu | The `.deb` from [Releases](https://github.com/combor/telesfor/releases/latest) |
+| Fedora | The `.rpm` from [Releases](https://github.com/combor/telesfor/releases/latest) |
+| macOS | `brew install --cask combor/tap/telesfor` |
+| Windows | `scoop bucket add combor https://github.com/combor/scoop-bucket`, then `scoop install combor/telesfor` |
+| Nix | `nix-env -f https://github.com/combor/nur/archive/main.tar.gz -iA telesfor` |
+
+The Linux packages install telesfor as a systemd service. Put its settings in
+`/etc/telesfor/telesfor.env`, then start it and enable it at boot:
+
+```sh
+sudo systemctl enable --now telesfor
+```
+
+Restart it after changing settings. Its log is in `journalctl -u telesfor`.
+
 ## Troubleshooting
 
 | Problem | What to check |

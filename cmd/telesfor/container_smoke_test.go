@@ -36,23 +36,7 @@ func TestContainerServesLineup(t *testing.T) {
 		_ = exec.Command("docker", "rm", "-f", id).Run()
 	})
 	addr, _, _ := strings.Cut(docker(ctx, t, "port", id, "5004/tcp"), "\n")
-	base := "http://" + addr
-
-	var lineup []struct{ GuideNumber, GuideName, URL string }
-	for {
-		err := getJSON(ctx, base+"/lineup.json", &lineup)
-		if err == nil {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("the lineup never came: %v", err)
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
-	if len(lineup) == 0 || !strings.HasPrefix(lineup[0].URL, base+"/stream/tvp/") {
-		t.Errorf("lineup = %+v, want TVP's channels, streamed from %s", lineup, base)
-	}
+	awaitLineup(ctx, t, "http://"+addr)
 
 	for {
 		status := docker(ctx, t, "inspect", "-f", "{{.State.Health.Status}}", id)
@@ -69,6 +53,30 @@ func TestContainerServesLineup(t *testing.T) {
 	// checks that the libraries it needs are in the image.
 	if out := docker(ctx, t, "exec", id, "ffmpeg", "-hide_banner", "-version"); !strings.HasPrefix(out, "ffmpeg version") {
 		t.Errorf("ffmpeg -version printed %q", out)
+	}
+}
+
+// awaitLineup waits for the telesfor at base to serve its lineup, and checks
+// that it is TVP's.
+func awaitLineup(ctx context.Context, t *testing.T, base string) {
+	t.Helper()
+	wait, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+
+	var lineup []struct{ GuideNumber, GuideName, URL string }
+	for {
+		err := getJSON(wait, base+"/lineup.json", &lineup)
+		if err == nil {
+			break
+		}
+		select {
+		case <-wait.Done():
+			t.Fatalf("the lineup never came: %v", err)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	if len(lineup) == 0 || !strings.HasPrefix(lineup[0].URL, base+"/stream/tvp/") {
+		t.Errorf("lineup = %+v, want TVP's channels, streamed from %s", lineup, base)
 	}
 }
 

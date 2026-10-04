@@ -50,23 +50,26 @@ jobs:
       - run: go vet ./...
       - run: go test -race -cover ./...
 
-  release-build:
-    name: Release Build
+  package-smoke:
+    name: Package Smoke Test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: 'go.mod'
           cache: false
-      - name: Build the release without publishing it
+      - name: Build the packages
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: v2.18.2
-          args: release --snapshot --clean
-      - name: Run the built binary
-        run: dist/telesfor_linux_amd64_v1/telesfor -version
+          args: release --snapshot --clean --skip=nix
+      # The service fetches its channels from TVP as it starts.
+      - name: Install and run each package as a systemd service
+        env:
+          TELESFOR_SMOKE_DIST: ${{ github.workspace }}/dist
+        run: go test -count=1 -timeout 20m -run TestPackageService ./cmd/telesfor
 
   container-smoke:
     name: Container Smoke Test
@@ -100,7 +103,7 @@ jobs:
     needs:
       - govulncheck
       - test
-      - release-build
+      - package-smoke
       - container-smoke
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -116,6 +119,18 @@ jobs:
         with:
           go-version-file: 'go.mod'
           cache: false
+      - name: Prepare RPM signing key
+        env:
+          RPM_GPG_PRIVATE_KEY: ${{ secrets.RPM_GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$RPM_GPG_PRIVATE_KEY" ]; then
+            echo "RPM_GPG_PRIVATE_KEY is not configured"
+            exit 1
+          fi
+          umask 077
+          printf '%s\n' "$RPM_GPG_PRIVATE_KEY" > "$RUNNER_TEMP/rpm-signing-private.asc"
+      # GoReleaser uses nix-hash to generate the Nix package.
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -123,6 +138,12 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_KEY_PATH: ${{ runner.temp }}/rpm-signing-private.asc
+          AUR_KEY: ${{ secrets.AUR_KEY }}
+          # Tokens need contents:write on the package repositories.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          SCOOP_BUCKET_GITHUB_TOKEN: ${{ secrets.SCOOP_BUCKET_GITHUB_TOKEN }}
+          NUR_GITHUB_TOKEN: ${{ secrets.NUR_GITHUB_TOKEN }}
 
   publish-container:
     name: Publish Container Image

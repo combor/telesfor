@@ -38,13 +38,137 @@ archives:
       - goos: windows
         formats:
           - zip
+    # AUR installs the service from this archive.
     files:
       - LICENSE
       - README.md
+      - src: packaging/linux/telesfor.{service,env}
+        dst: systemd
+        strip_parent: true
 
 checksum:
   name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
   algorithm: sha256
+
+nfpms:
+  - id: telesfor
+    package_name: telesfor
+    ids:
+      - telesfor
+    vendor: combor
+    homepage: https://github.com/combor/telesfor
+    maintainer: 'combor <163394+combor@users.noreply.github.com>'
+    description: &description Live TV from streaming services in Plex, as a virtual HDHomeRun tuner.
+    license: BSD-3-Clause
+    section: video
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    dependencies:
+      - ca-certificates
+      - ffmpeg
+    overrides:
+      rpm:
+        # Fedora's ffmpeg-free provides the binary, not the ffmpeg package name.
+        dependencies:
+          - ca-certificates
+          - /usr/bin/ffmpeg
+    rpm:
+      signature:
+        key_file: '{{ if isEnvSet "GPG_KEY_PATH" }}{{ .Env.GPG_KEY_PATH }}{{ end }}'
+    contents:
+      - src: LICENSE
+        dst: /usr/share/licenses/telesfor/LICENSE
+        packager: rpm
+      - src: LICENSE
+        dst: /usr/share/doc/telesfor/copyright
+        packager: deb
+      - src: packaging/linux/telesfor.service
+        dst: /usr/lib/systemd/system/telesfor.service
+      - dst: /etc/telesfor
+        type: dir
+      # It may hold the password of a proxy.
+      - src: packaging/linux/telesfor.env
+        dst: /etc/telesfor/telesfor.env
+        type: config|noreplace
+        file_info:
+          mode: 0600
+    scripts:
+      postinstall: packaging/linux/postinstall.sh
+      preremove: packaging/linux/preremove.sh
+      postremove: packaging/linux/postremove.sh
+
+aurs:
+  - name: telesfor-bin
+    homepage: https://github.com/combor/telesfor
+    description: *description
+    license: BSD-3-Clause
+    maintainers:
+      - 'combor <163394+combor@users.noreply.github.com>'
+    private_key: '{{ .Env.AUR_KEY }}'
+    git_url: 'ssh://aur@aur.archlinux.org/telesfor-bin.git'
+    skip_upload: auto
+    provides:
+      - telesfor
+    conflicts:
+      - telesfor
+    depends:
+      - ca-certificates
+      - ffmpeg
+    backup:
+      - etc/telesfor/telesfor.env
+    install: packaging/linux/telesfor.install
+    package: |-
+      install -Dm755 "./telesfor" "${pkgdir}/usr/bin/telesfor"
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/telesfor-bin/LICENSE"
+      install -Dm644 "./systemd/telesfor.service" "${pkgdir}/usr/lib/systemd/system/telesfor.service"
+      install -Dm600 "./systemd/telesfor.env" "${pkgdir}/etc/telesfor/telesfor.env"
+
+homebrew_casks:
+  - name: telesfor
+    homepage: https://github.com/combor/telesfor
+    description: *description
+    dependencies:
+      - formula: ffmpeg
+    repository:
+      owner: combor
+      name: homebrew-tap
+      branch: main
+      token: '{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}'
+    skip_upload: auto
+
+scoops:
+  - name: telesfor
+    homepage: https://github.com/combor/telesfor
+    description: *description
+    license: BSD-3-Clause
+    depends:
+      - ffmpeg
+    repository:
+      owner: combor
+      name: scoop-bucket
+      branch: main
+      token: '{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}'
+    skip_upload: auto
+
+nix:
+  - name: telesfor
+    homepage: https://github.com/combor/telesfor
+    description: *description
+    license: bsd3
+    main_program: telesfor
+    # The generated wrapper adds ffmpeg to PATH.
+    dependencies:
+      - ffmpeg
+    extra_install: |-
+      install -Dm644 ./LICENSE "$out/share/licenses/telesfor/LICENSE"
+    repository:
+      owner: combor
+      name: nur
+      branch: main
+      token: '{{ .Env.NUR_GITHUB_TOKEN }}'
+    skip_upload: auto
 
 changelog:
   disable: true

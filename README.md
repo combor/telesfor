@@ -41,6 +41,7 @@ the machine running telesfor. Check that `ffmpeg -version` works in your termina
 [Releases](https://github.com/combor/telesfor/releases) and unpack it.
 To build it yourself, see [Build from source](docs/usage.md#build-from-source).
 To run it as a container, see [Docker](docs/usage.md#docker).
+To install it with a package manager, see [Packages](docs/usage.md#packages).
 
 **2. Start it.** Open a terminal in the unpacked folder and run:
 

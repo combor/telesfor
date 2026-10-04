@@ -106,8 +106,17 @@ docker build -t telesfor:smoke .
 TELESFOR_SMOKE_IMAGE=telesfor:smoke go test -count=1 -run TestContainerServesLineup ./cmd/telesfor
 ```
 
+To test the Linux packages, which CI does as well. It needs GoReleaser and
+Docker:
+
+```sh
+goreleaser release --snapshot --clean --skip=nix
+TELESFOR_SMOKE_DIST=$PWD/dist go test -count=1 -timeout 20m -run TestPackageService ./cmd/telesfor
+```
+
 ## Releases
 
 Push a tag that starts with `v`, such as `v0.1.0`. Once the checks pass, CI
-builds the archives with GoReleaser and publishes them as a GitHub release,
+builds the archives and packages with GoReleaser and publishes them as a
+GitHub release, to the AUR and to the Homebrew, Scoop and Nix repositories,
 then pushes the container image to `ghcr.io/combor/telesfor`.

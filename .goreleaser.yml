@@ -1,0 +1,50 @@
+version: 2
+
+project_name: telesfor
+
+release:
+  prerelease: auto
+
+builds:
+  - id: telesfor
+    main: ./cmd/telesfor
+    binary: telesfor
+    env:
+      - CGO_ENABLED=0
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    flags:
+      - -trimpath
+    ldflags:
+      - '-s -w -X main.version={{.Version}}'
+    # The systems Plex Media Server runs on.
+    goos:
+      - darwin
+      - freebsd
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: telesfor
+    formats:
+      - tar.gz
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
+  algorithm: sha256
+
+changelog:
+  disable: true

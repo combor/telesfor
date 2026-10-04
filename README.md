@@ -21,15 +21,23 @@ the few that are DRM-encrypted cannot be played.
 
 ## Requirements
 
-- a recent Go toolchain, to build
 - `ffmpeg` on `PATH`
 - Plex Media Server with Live TV & DVR, which needs a Plex Pass
 
 ## Run
 
+Download the archive for your system from the
+[releases](https://github.com/combor/telesfor/releases), unpack it and start
+telesfor:
+
+```sh
+./telesfor -tvp-proxy http://<proxy-host>:<port>
+```
+
+Or build it yourself, with a recent Go toolchain:
+
 ```sh
 go build ./cmd/telesfor
-./telesfor -tvp-proxy http://<proxy-host>:<port>
 ```
 
 | Flag         | Environment          | Default | Meaning                                                    |
@@ -37,6 +45,7 @@ go build ./cmd/telesfor
 | `-listen`    | `TELESFOR_LISTEN`    | `:5004` | address to listen on                                       |
 | `-tvp-proxy` | `TELESFOR_TVP_PROXY` | none    | HTTP proxy for all TVP traffic                             |
 | `-debug`     | `TELESFOR_DEBUG`     | off     | also log every request, upstream fetch and ffmpeg warning |
+| `-version`   |                      |         | print the version and exit                                 |
 
 ## Add it to Plex
 
@@ -153,3 +162,7 @@ API, which CI does daily:
 ```sh
 TELESFOR_LIVE=1 go test -count=1 -v -run TestLive ./internal/provider/tvp
 ```
+
+To release, push a tag that starts with `v`, such as `v0.1.0`. Once the checks
+pass, CI builds the archives with GoReleaser and publishes them as a GitHub
+release.

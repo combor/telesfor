@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,6 +16,9 @@ import (
 	"github.com/combor/telesfor/internal/tuner"
 )
 
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	listen := flag.String("listen", envOr("TELESFOR_LISTEN", ":5004"),
 		"address to listen on (env TELESFOR_LISTEN)")
@@ -22,8 +26,13 @@ func main() {
 		"HTTP proxy for TVP, which blocks most channels outside Poland (env TELESFOR_TVP_PROXY)")
 	debug := flag.Bool("debug", os.Getenv("TELESFOR_DEBUG") != "",
 		"also log every request, every upstream fetch and ffmpeg's warnings (env TELESFOR_DEBUG)")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
+	if *showVersion {
+		fmt.Println("telesfor", version)
+		return
+	}
 	if *debug {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
@@ -53,7 +62,7 @@ func run(listen, tvpProxy string) error {
 		return err
 	}
 
-	slog.Info("telesfor is on the air", "listen", listen, "channels", t.Channels())
+	slog.Info("telesfor is on the air", "version", version, "listen", listen, "channels", t.Channels())
 	return http.ListenAndServe(listen, t)
 }
 

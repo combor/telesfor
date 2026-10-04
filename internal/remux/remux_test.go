@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -117,25 +119,65 @@ func TestRelayByteRange(t *testing.T) {
 
 // An upstream transfer that breaks off must not reach ffmpeg looking complete.
 func TestRelayInterruptedTransfer(t *testing.T) {
+	// A file that is passed on as it arrives, and one the size of an MPEG-TS
+	// segment, which is passed on in whole packets.
+	for _, size := range []int{10, 2 * packetSize} {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", strconv.Itoa(size))
+			w.Write(make([]byte, size/2)) // half of it, and then the connection drops
+		}))
+		defer upstream.Close()
+
+		relay, local, err := openRelay(upstream.URL+"/segment", upstream.Client())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer relay.close()
+
+		resp, err := http.Get(local)
+		if err != nil {
+			continue // failed before the first byte: just as good
+		}
+		defer resp.Body.Close()
+		if body, err := io.ReadAll(resp.Body); err == nil {
+			t.Errorf("read %d of %d bytes without an error, want the transfer to fail as it did upstream", len(body), size)
+		}
+	}
+}
+
+// An MPEG-TS segment whose frames are stamped to be decoded after they are
+// shown must reach ffmpeg with its timestamps repaired.
+func TestRelayRepairsTimestamps(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Length", "10")
-		io.WriteString(w, "01234") // half of it, and then the connection drops
+		file := segment(900000, frameLength)
+		if r.URL.Path == "/init.mp4" {
+			file = file[1:] // the same bytes, but not as whole packets
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(file)))
+		// A file arrives in pieces that end anywhere, not where packets end.
+		for piece := range slices.Chunk(file, 100) {
+			w.Write(piece)
+			w.(http.Flusher).Flush()
+			time.Sleep(time.Millisecond)
+		}
 	}))
 	defer upstream.Close()
 
-	relay, local, err := openRelay(upstream.URL+"/segment.mp4", upstream.Client())
+	relay, local, err := openRelay(upstream.URL+"/playlist.m3u8", upstream.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer relay.close()
+	manifest, _ := url.Parse(local)
 
-	resp, err := http.Get(local)
-	if err != nil {
-		return // failed before the first byte: just as good
+	// The first segment tells the relay how late the stream is. From then on
+	// every frame is repaired.
+	get(t, manifest, "segment1.ts")
+	if got := get(t, manifest, "segment2.ts"); got.status != 200 || got.body != string(segment(900000, 0)) {
+		t.Errorf("segment: got %d and %d bytes, want the segment with its frames decoded in time", got.status, len(got.body))
 	}
-	defer resp.Body.Close()
-	if body, err := io.ReadAll(resp.Body); err == nil {
-		t.Errorf("read %q without an error, want the transfer to fail as it did upstream", body)
+	if got := get(t, manifest, "init.mp4"); got.status != 200 || got.body != string(segment(900000, frameLength)[1:]) {
+		t.Errorf("another file: got %d and %d bytes, want it relayed as is", got.status, len(got.body))
 	}
 }
 

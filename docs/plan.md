@@ -27,7 +27,10 @@ Decisions already made with you: **ffmpeg stream copy** for remuxing, **XMLTV gu
 | `GET /{id}/videos/playlist?platform=BROWSER&videoType=LIVE` | 200 `{sources:{HLS:[{src}]}, drm?:{…}}`; 403 `{code:"GEOIP_FILTER_FAILED"}` / `"ITEM_NOT_PAID"`. Geo-blocked. |
 | `GET /lives/programmes?platform=BROWSER&lang=PL&since=…&till=…&liveId[]=…` | Array of `{id,title,description,lead,since,till,live:{id}}`. Dates as `2006-01-02T15:04-0700`. Max span ~24 h per call (36 h → `LIVE_PROGRAMME_INVALID_TIMESPAN`); data ~8 days ahead; returns programmes overlapping the window. All channels × 24 h ≈ 7 MB, ~6 s. |
 
-**Stream**: HLS master with 1080p50 / 576p50 / 288p50 H.264 + AAC, **fMP4 segments, audio in a separate rendition**, relative URIs, 2 s segments. No MPEG-TS flavour exists, so remuxing is unavoidable.
+**Stream**: HLS master with up to 1080p50 H.264 + AAC and relative URIs, in three flavours. None is one continuous MPEG-TS, so remuxing is unavoidable.
+- 28 channels: **fMP4 segments, audio in a separate rendition**, 2 s segments.
+- 9 channels (Historia 2, Alfa, ABC 2, Wilno, Kultura 2, Belsat, World, Parlament Sejm/Senat): MPEG-TS segments of 4 s.
+- 5 channels (Barwy Szczęścia, Klan, Kryminały, Miłość, Muzyka i Koncerty): MPEG-TS segments of 4 s whose B-frames are stamped to be decoded 20 ms *after* they are shown. ffmpeg guesses its way around that and writes an irregular stream, so the relay repairs the segments first.
 
 **Network constraints that shape the design**
 - Stream tokens are bound to the caller's IP (it is encoded in the CDN path), and the CDN nodes given to Polish clients are unreachable from elsewhere: the API call and every media fetch must leave through the same Polish exit.
@@ -55,6 +58,7 @@ internal/provider/provider.go  the plugin contract
 internal/provider/tvp/tvp.go   TVP: channel list, guide, stream resolution
 internal/remux/remux.go        ffmpeg stream copy to MPEG-TS
 internal/remux/relay.go        loopback fetcher so ffmpeg never touches the network
+internal/remux/repair.go       puts the decoding times of MPEG-TS segments back in order
 internal/remux/align.go        starts the output where every stream in it has started
 internal/tuner/tuner.go        HDHomeRun emulation + /stream handler
 internal/tuner/xmltv.go        /xmltv.xml guide
@@ -89,7 +93,8 @@ Providers are stateless; each owns its `*http.Client`, which is what makes per-p
   - `Programmes`: one request per 24 h window, de-duplicated by programme id (windows overlap).
 - **`internal/remux/relay.go`** — one relay per stream. Every upstream server the stream touches gets a twin: a listener on `127.0.0.1:0` that answers each request by fetching the same path from that server with the provider's client, so relative URIs of any shape resolve as they do upstream. Redirects are not followed but handed to ffmpeg, rewritten to the twin of their target, so ffmpeg resolves a redirected manifest's URIs as a player would (TVP's CDN for viewers outside Poland redirects the manifest to an edge server and serves media only from there).
 - **`internal/remux/remux.go`** — `New()` checks `ffmpeg` is on `PATH`. `Copy(ctx, w, url, client)` opens a relay for the stream and runs
-  `ffmpeg -hide_banner -nostdin -loglevel fatal -i <relay url> -c copy -f mpegts pipe:1` via `exec.CommandContext` (stdout → `w`, stderr → ours, `no_proxy=*` in its env).
+  `ffmpeg -hide_banner -nostdin -loglevel fatal -live_start_index -6 -i <relay url> -c copy -f mpegts pipe:1` via `exec.CommandContext` (stdout → `w`, stderr → ours, `no_proxy=*` in its env). Joining six segments behind the newest, instead of ffmpeg's three, hands Plex 12–24 s of stream at once. Plex holds about 5 s of what it receives back from its player, segments arrive in bursts, and ffmpeg's playlist polling slips by ~0.15 s per segment until it catches up a whole one: with three segments, Plex's own statistics showed the player about 1 s from running dry on a 4 s channel, and losing ground. The option is only passed for `.m3u8` manifests, as ffmpeg refuses it for anything but HLS.
+- **`internal/remux/repair.go`** — `repairDTS(packets, late)` moves every DTS in a run of MPEG-TS packets back by the most that any frame of the stream so far was decoded late (DTS after PTS), in place. The relay passes any file that may be MPEG-TS (a known length that is a multiple of 188 bytes) on in whole packets, repaired, and keeps `late` for the life of the stream, so nothing is held back and startup costs nothing: holding each segment until it was whole added ~0.6 s. Valid streams come out byte for byte as they went in. Two traces are left. The frames before the first late one in the first segment fetched go unrepaired; that is the lowest quality, which ffmpeg drops. And these streams give their keyframes no DTS at all, so ffmpeg takes the very first one to be decoded as it is shown and moves the frame after it by one tick, with one `Non-monotonic DTS` warning per tune.
 - **`internal/remux/align.go`** — an `io.Writer` between ffmpeg and the viewer. ffmpeg picks the starting segment of the video and the audio playlist independently, so now and then (14% of tunes in one sample) the stream opens with 4 s of video and no audio, and Plex then fails with "Could not tune channel". The aligner reads the MPEG-TS tables, holds back the packets since the last keyframe, and passes the stream on once every listed stream has started. It gives up and passes everything through after 12 MB.
 - **`internal/tuner/tuner.go`** — `New(ctx, providers, remuxer)` loads the lineup once; channel numbers are `1..N` in provider order. Routes on a Go 1.22-style `ServeMux`:
   `GET /discover.json`, `GET /lineup_status.json`, `GET /lineup.json`, `POST /lineup.post` (no-op), `GET /stream/{provider}/{channel}`, `GET /xmltv.xml`.
@@ -100,6 +105,7 @@ Providers are stateless; each owns its `*http.Client`, which is what makes per-p
 - **Tests** (compact, hermetic)
   - `tvp_test.go`: `httptest` server with trimmed real responses — channel filtering, HLS resolution, DRM and geo-block errors, 24 h windowing + de-dup.
   - `remux_test.go`: relay path mapping, byte ranges and redirects; one end-to-end `Copy` over an ffmpeg-generated test HLS behind a redirect (skipped when ffmpeg is absent).
+  - `repair_test.go`: hand-built segments decoded in time, early, late, across the wrap of the clock, and absurdly late; files that are not MPEG-TS. `remux_test.go` checks that the relay repairs a late stream and leaves other files alone.
   - `align_test.go`: hand-built packet sequences (streams starting together, video first, audio first, giving up), and a real ffmpeg stream whose audio starts 3 s late.
   - `tuner_test.go`: fake provider — JSON shapes, lineup numbering/URLs, XMLTV output, 404/503 paths.
 

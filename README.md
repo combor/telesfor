@@ -63,7 +63,8 @@ Plex ◀──────────── MPEG-TS ─────────
 | `internal/provider`     | the contract every TV source implements                     |
 | `internal/provider/tvp` | TVP: channels, guide, streams                               |
 | `internal/remux`        | ffmpeg stream copy to MPEG-TS, fed through a loopback relay |
-|                         | and trimmed to start where all its streams have started     |
+|                         | that repairs timestamps, and trimmed to start where all its |
+|                         | streams have started                                        |
 | `internal/tuner`        | HDHomeRun emulation and the XMLTV guide                     |
 | `cmd/telesfor`          | wiring                                                      |
 
@@ -82,6 +83,22 @@ sound. Players cope; Plex gives up on the channel ("Could not tune channel").
 So telesfor passes ffmpeg's output on only from the point where every stream
 has started, beginning at a keyframe.
 
+**Why repair timestamps?** On a handful of channels, TVP stamps frames to be
+decoded after they are due on screen, which cannot be done. ffmpeg replaces
+those times with guesses, and writes a stream that is decoded in fits and
+starts. So the relay moves the decoding times of such segments back into order
+before ffmpeg reads them. Segments with sound timestamps pass through
+untouched.
+
+**Why start behind the live edge?** A live stream arrives a segment at a time,
+and ffmpeg finds each new segment a little later than the one before, until it
+is a whole segment behind and catches up. Plex keeps a few seconds of what it
+receives back from its player, and shows a spinner when the player runs dry.
+So telesfor joins a stream six segments behind its newest (12 s on most TVP
+channels, 24 s on the rest) and hands those over at once: the player starts
+with that much in hand. The price is a picture that much further behind the
+broadcast.
+
 ## Reading the log
 
 Every time a channel is tuned, telesfor logs three lines:
@@ -99,7 +116,10 @@ before anything was sent, the last line is a warning instead, and a channel
 that cannot be tuned at all is an error with the reason.
 
 Run with `-debug` to also see each request Plex makes, each file fetched from
-the provider with its size and timing, and ffmpeg's own warnings.
+the provider with its size and timing, and ffmpeg's own warnings. A few of
+those are part of every tune: `Packet corrupt` and `Invalid NAL unit size`
+right after `on air` are ffmpeg dropping the qualities it will not use, in the
+middle of a frame.
 
 ## Adding a provider
 

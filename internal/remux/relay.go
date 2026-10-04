@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,8 +22,12 @@ import (
 // manifest lead back to the twin it came from, and a redirect is rewritten to
 // lead to the twin of its target. Only a manifest that names another server by
 // full URL leads ffmpeg away from the relay.
+//
+// Files are passed on as they are, but for MPEG-TS with timestamps that cannot
+// be right: those are repaired on the way. See repairDTS.
 type relay struct {
 	client *http.Client // fetches everything, and leaves redirects to ffmpeg
+	late   atomic.Int64 // how late the stream stamps its frames to be decoded: see repairDTS
 
 	mu     sync.Mutex
 	twins  map[string]*http.Server // by the server they stand in for, as scheme://host
@@ -122,7 +127,7 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 		w.Header().Set("Location", location)
 	}
 	w.WriteHeader(resp.StatusCode)
-	size, err := io.Copy(w, resp.Body)
+	size, err := r.pass(w, resp)
 	if err != nil {
 		if req.Context().Err() == nil {
 			slog.Warn("relay: upstream transfer failed", "file", file, "err", err)
@@ -132,6 +137,37 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 		panic(http.ErrAbortHandler)
 	}
 	slog.Debug("relay: fetched", "file", file, "status", resp.StatusCode, "bytes", size, "took", time.Since(began).Round(time.Millisecond))
+}
+
+// pass copies the body of a response to w. MPEG-TS comes in packets of 188
+// bytes, so a body that may be made of them is passed on in whole packets,
+// with their timestamps repaired.
+func (r *relay) pass(w io.Writer, resp *http.Response) (size int64, err error) {
+	if resp.ContentLength <= 0 || resp.ContentLength%packetSize != 0 {
+		return io.Copy(w, resp.Body)
+	}
+
+	was := r.late.Load()
+	buf := make([]byte, 32<<10)
+	held := 0 // bytes at the start of buf: a packet that has not arrived in full
+	for err == nil {
+		var n int
+		n, err = resp.Body.Read(buf[held:])
+		whole := (held + n) / packetSize * packetSize
+		repairDTS(buf[:whole], &r.late)
+		if _, err := w.Write(buf[:whole]); err != nil {
+			return size, err
+		}
+		size += int64(whole)
+		held = copy(buf, buf[whole:held+n])
+	}
+	if late := r.late.Load(); late != was {
+		slog.Debug("relay: decoding times run late, moving them back", "by", time.Duration(late)*time.Second/90000)
+	}
+	if err == io.EOF {
+		err = nil
+	}
+	return size, err
 }
 
 // close stops the relay's twins.

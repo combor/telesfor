@@ -3,8 +3,11 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/combor/telesfor/internal/web"
 )
 
 func TestHealthURL(t *testing.T) {
@@ -45,5 +48,21 @@ func TestCheckHealth(t *testing.T) {
 	server.Close()
 	if err := checkHealth(listen); err == nil {
 		t.Error("checkHealth passed with nothing listening")
+	}
+}
+
+func TestSettings(t *testing.T) {
+	got := settings(":5004", "http://user:secret@proxy.example:8888", true)
+	want := []web.Setting{
+		{Name: "Listen address", Value: ":5004", Flag: "-listen", Env: "TELESFOR_LISTEN"},
+		// Without the login: the settings page is open to the network.
+		{Name: "TVP proxy", Value: "http://proxy.example:8888", Flag: "-tvp-proxy", Env: "TELESFOR_TVP_PROXY"},
+		{Name: "Debug logging", State: "On", Flag: "-debug", Env: "TELESFOR_DEBUG"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("settings = %+v, want %+v", got, want)
+	}
+	if got := settings(":5004", "", false); got[1].State != "Not set" || got[2].State != "Off" {
+		t.Errorf("settings without a proxy or debug logging = %+v", got)
 	}
 }

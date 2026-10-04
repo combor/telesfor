@@ -17,6 +17,7 @@ import (
 	"github.com/combor/telesfor/internal/provider/tvp"
 	"github.com/combor/telesfor/internal/remux"
 	"github.com/combor/telesfor/internal/tuner"
+	"github.com/combor/telesfor/internal/web"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -48,13 +49,13 @@ func main() {
 	if *debug {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
-	if err := run(*listen, *tvpProxy); err != nil {
+	if err := run(*listen, *tvpProxy, *debug); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(listen, tvpProxy string) error {
+func run(listen, tvpProxy string, debug bool) error {
 	tvpProvider, err := tvp.New(tvpProxy)
 	if err != nil {
 		return err
@@ -74,8 +75,30 @@ func run(listen, tvpProxy string) error {
 		return err
 	}
 
+	mux := http.NewServeMux()
+	mux.Handle("/", t)
+	(&web.Handler{Tuner: t, Settings: settings(listen, tvpProxy, debug), Version: version}).Register(mux)
+
 	slog.Info("telesfor is on the air", "version", version, "listen", listen, "channels", t.Channels())
-	return http.ListenAndServe(listen, t)
+	return http.ListenAndServe(listen, mux)
+}
+
+// settings is how telesfor was started, for the settings page.
+func settings(listen, tvpProxy string, debug bool) []web.Setting {
+	proxy := web.Setting{Name: "TVP proxy", State: "Not set", Flag: "-tvp-proxy", Env: "TELESFOR_TVP_PROXY"}
+	if u, err := url.Parse(tvpProxy); err == nil && u.Host != "" {
+		u.User = nil // the page is open to whoever can reach the tuner
+		proxy.Value, proxy.State = u.String(), ""
+	}
+	logging := "Off"
+	if debug {
+		logging = "On"
+	}
+	return []web.Setting{
+		{Name: "Listen address", Value: listen, Flag: "-listen", Env: "TELESFOR_LISTEN"},
+		proxy,
+		{Name: "Debug logging", State: logging, Flag: "-debug", Env: "TELESFOR_DEBUG"},
+	}
 }
 
 // checkHealth asks the telesfor that listens on the given address whether it is

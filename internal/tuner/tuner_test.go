@@ -1,6 +1,7 @@
 package tuner
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -8,15 +9,20 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/remux"
 )
 
 // fake is a provider with two channels and a guide entry for each. Its
 // channels can be tuned only when it has signal.
-type fake struct{ signal bool }
+type fake struct {
+	signal   bool
+	manifest string // where its streams are, if anywhere real
+}
 
 func (fake) Name() string { return "fake" }
 
@@ -40,7 +46,7 @@ func (f fake) Stream(context.Context, string) (provider.Source, error) {
 	if !f.signal {
 		return provider.Source{}, errors.New("no signal")
 	}
-	return provider.Source{URL: "https://example.com/master.m3u8"}, nil
+	return provider.Source{URL: cmp.Or(f.manifest, "https://example.com/master.m3u8")}, nil
 }
 
 // request sends a request to a tuner offering the channels of p. The tuner has
@@ -144,5 +150,47 @@ func TestStream(t *testing.T) {
 	}
 	if status := request(t, fake{}, http.MethodHead, "/stream/fake/one").Code; status != http.StatusServiceUnavailable {
 		t.Errorf("HEAD of a channel that cannot be tuned: got %d, want 503", status)
+	}
+}
+
+// TestLineupCountsStreams tunes a channel whose stream never starts, so that
+// it stays open for as long as the viewer does.
+func TestLineupCountsStreams(t *testing.T) {
+	remuxer, err := remux.New()
+	if err != nil {
+		t.Skip("ffmpeg is not installed")
+	}
+	var once sync.Once
+	asked, hold := make(chan struct{}), make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		once.Do(func() { close(asked) })
+		<-hold
+	}))
+	defer upstream.Close()
+	defer close(hold)
+
+	tuner, err := New(t.Context(), []provider.Provider{fake{signal: true, manifest: upstream.URL + "/master.m3u8"}}, remuxer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Station{{"1", "One", 0}, {"2", "Two", 0}}; !reflect.DeepEqual(tuner.Lineup(), want) {
+		t.Fatalf("lineup = %+v, want %+v", tuner.Lineup(), want)
+	}
+
+	viewer, leave := context.WithCancel(t.Context())
+	left := make(chan struct{})
+	go func() {
+		defer close(left)
+		req := httptest.NewRequest(http.MethodGet, "http://plex.local:5004/stream/fake/two", nil)
+		tuner.ServeHTTP(httptest.NewRecorder(), req.WithContext(viewer))
+	}()
+	<-asked
+	if want := []Station{{"1", "One", 0}, {"2", "Two", 1}}; !reflect.DeepEqual(tuner.Lineup(), want) {
+		t.Errorf("lineup with a viewer on Two = %+v, want %+v", tuner.Lineup(), want)
+	}
+	leave()
+	<-left
+	if streams := tuner.Lineup()[1].Streams; streams != 0 {
+		t.Errorf("Two has %d streams after its viewer left, want none", streams)
 	}
 }

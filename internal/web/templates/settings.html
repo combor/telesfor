@@ -1,0 +1,72 @@
+{{define "page" -}}
+  <h1 class="page-title">Settings</h1>
+
+  <section class="card guide" aria-labelledby="plex-title">
+    <header class="guide-head">
+      <h2 id="plex-title">Connect Plex</h2>
+      <p class="lead">Add telesfor to Plex as a tuner, then point Plex at its guide.</p>
+    </header>
+    <div class="fieldset">
+      <div class="fieldset-about">
+        <h3>Tuner</h3>
+        <p>Settings → Live TV &amp; DVR → Set Up Plex DVR</p>
+      </div>
+      <dl class="values">
+        <dt>Address</dt>
+        <dd><code class="value">{{.Tuner}}</code><p class="for">Plex doesn’t find telesfor by itself. Enter the address by hand.</p></dd>
+      </dl>
+    </div>
+    <div class="fieldset">
+      <div class="fieldset-about">
+        <h3>Guide</h3>
+        <p>Once the channels appear, choose an XMLTV guide</p>
+      </div>
+      <dl class="values">
+        <dt>XMLTV guide</dt>
+        <dd><code class="value">{{.Guide}}</code></dd>
+      </dl>
+    </div>
+    <p class="guide-note">The addresses are the ones this page was opened with. If Plex reaches telesfor another way, such as by a Docker service name, use that host instead.</p>
+  </section>
+
+  <section aria-labelledby="server-title">
+    <div class="section-head">
+      <h2 id="server-title">This server</h2>
+    </div>
+    <div class="card server">
+      <dl class="values">
+        {{- with .Version}}
+        <dt>Version</dt>
+        <dd>{{.}}</dd>
+        {{- end}}
+        {{- range .Settings}}
+        <dt>{{.Name}}</dt>
+        <dd>{{if .Value}}<code class="value">{{.Value}}</code>{{else}}{{.State}}{{end}}<p class="for"><code>{{.Flag}}</code> or <code>{{.Env}}</code></p></dd>
+        {{- end}}
+      </dl>
+      <p class="guide-note">telesfor reads its settings when it starts. To change one, set its flag or environment variable and restart. See <a href="https://github.com/combor/telesfor/blob/main/docs/usage.md#configuration">Configuration</a>.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="channels-title">
+    <div class="section-head">
+      <h2 id="channels-title">Channels</h2>
+      <span class="count">{{len .Channels}}</span>
+    </div>
+    {{- if .Channels}}
+    <ul class="channels">
+      {{- range .Channels}}
+      <li class="channel{{if .Streams}} channel-on-air{{end}}">
+        <span class="pos{{if .Streams}} pos-ok{{end}}">{{.Number}}</span>
+        <span class="channel-name" title="{{.Name}}">{{.Name}}</span>
+        {{- if .Streams}}
+        <span class="badge badge-ok">On air{{if gt .Streams 1}} ×{{.Streams}}{{end}}</span>
+        {{- end}}
+      </li>
+      {{- end}}
+    </ul>
+    {{- else}}
+    <p class="hint">The providers offered no channels. telesfor asks them when it starts.</p>
+    {{- end}}
+  </section>
+{{- end}}

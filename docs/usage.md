@@ -93,6 +93,16 @@ sudo systemctl enable --now telesfor
 
 Restart it after changing settings. Its log is in `journalctl -u telesfor`.
 
+## Web interface
+
+Open `http://<telesfor-host>:5004/` in a browser. The **Settings** page shows
+the tuner and guide addresses to enter in Plex, the settings telesfor was
+started with, and the channels, marking the ones being watched. It refreshes
+every five seconds.
+
+The page changes nothing and asks for no sign-in: anyone who can reach
+telesfor can open it. It leaves out a proxy's user name and password.
+
 ## Troubleshooting
 
 | Problem | What to check |
@@ -103,9 +113,9 @@ Restart it after changing settings. Its log is in `journalctl -u telesfor`.
 | The guide is missing | Check that `http://<telesfor-host>:5004/xmltv.xml` is reachable from Plex and selected as its XMLTV guide. |
 | Playback stops when the terminal closes | Keep telesfor running for both viewing and scheduled recordings. |
 
-The server does not have a web interface at `/`. Use `/discover.json` to
-check the tuner, `/lineup.json` to see the channels, or `/xmltv.xml` for the guide.
-If you changed the port, update these addresses too.
+Use `/discover.json` to check the tuner, `/lineup.json` to see the channels,
+or `/xmltv.xml` for the guide. If you changed the port, update these addresses
+too.
 
 ### Reading the log
 

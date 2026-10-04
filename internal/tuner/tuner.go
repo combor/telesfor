@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/combor/telesfor/internal/provider"
@@ -39,6 +40,7 @@ type channel struct {
 	provider.Channel
 	number   string            // GuideNumber in Plex, and the channel's id in the guide
 	provider provider.Provider // where the channel comes from
+	streams  *atomic.Int32     // how many streams of it are open
 }
 
 // New asks the providers for their channels and returns a tuner that offers
@@ -52,7 +54,7 @@ func New(ctx context.Context, providers []provider.Provider, remuxer *remux.Remu
 		}
 		for _, c := range channels {
 			number := strconv.Itoa(len(t.lineup) + 1)
-			t.lineup = append(t.lineup, channel{c, number, p})
+			t.lineup = append(t.lineup, channel{c, number, p, new(atomic.Int32)})
 		}
 	}
 
@@ -77,6 +79,22 @@ func (t *Tuner) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Channels reports how many channels are in the lineup.
 func (t *Tuner) Channels() int { return len(t.lineup) }
 
+// Station is a channel of the lineup, and how many streams of it are open.
+type Station struct {
+	Number  string // GuideNumber in Plex
+	Name    string
+	Streams int
+}
+
+// Lineup lists the channels in the order Plex shows them.
+func (t *Tuner) Lineup() []Station {
+	stations := make([]Station, len(t.lineup))
+	for i, ch := range t.lineup {
+		stations[i] = Station{ch.number, ch.Name, int(ch.streams.Load())}
+	}
+	return stations
+}
+
 // discover describes the device. Plex reads it when the tuner is added.
 func (t *Tuner) discover(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
@@ -88,8 +106,8 @@ func (t *Tuner) discover(w http.ResponseWriter, r *http.Request) {
 		"DeviceID":        deviceID,
 		"DeviceAuth":      "telesfor",
 		"TunerCount":      tunerCount,
-		"BaseURL":         baseURL(r),
-		"LineupURL":       baseURL(r) + "/lineup.json",
+		"BaseURL":         BaseURL(r),
+		"LineupURL":       BaseURL(r) + "/lineup.json",
 	})
 }
 
@@ -112,7 +130,7 @@ func (t *Tuner) lineupJSON(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, entry{
 			GuideNumber: ch.number,
 			GuideName:   ch.Name,
-			URL:         baseURL(r) + "/stream/" + ch.provider.Name() + "/" + url.PathEscape(ch.ID),
+			URL:         BaseURL(r) + "/stream/" + ch.provider.Name() + "/" + url.PathEscape(ch.ID),
 		})
 	}
 	writeJSON(w, entries)
@@ -144,6 +162,8 @@ func (t *Tuner) stream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("tuning", "channel", ch.Name, "viewer", r.RemoteAddr)
+	ch.streams.Add(1)
+	defer ch.streams.Add(-1)
 	out := &broadcast{ResponseWriter: w, channel: ch.Name, tuned: tuned}
 	err = t.remux.Copy(r.Context(), out, source.URL, source.Client)
 
@@ -210,9 +230,9 @@ func (r *response) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// baseURL is the address the client reached the tuner at, so that the URLs it
+// BaseURL is the address the client reached the tuner at, so that the URLs it
 // is handed work from wherever it is.
-func baseURL(r *http.Request) string { return "http://" + r.Host }
+func BaseURL(r *http.Request) string { return "http://" + r.Host }
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")

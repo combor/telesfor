@@ -1,0 +1,62 @@
+{{define "layout" -}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f6f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e0f12" media="(prefers-color-scheme: dark)">
+<title>{{.Title}}</title>
+<link rel="icon" href="/ui/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/static/style.css">
+<meta name="htmx-config" content='{"includeIndicatorCSS": false}'>
+<script src="/ui/static/htmx-4.0.0.min.js" defer></script>
+</head>
+<body>
+<div id="app" hx-get="{{.Path}}" hx-trigger="every 5s" hx-swap="innerMorph">
+{{template "app" .}}
+</div>
+</body>
+</html>
+{{- end}}
+
+{{/* The refreshed part of the page, with the tab's title. */}}
+{{define "update"}}<title>{{.Title}}</title>
+{{template "app" .}}{{end}}
+
+{{define "app" -}}
+<header class="topbar" data-state="{{.State}}">
+  <div class="topbar-inner">
+    <a class="brand" href="/ui/">
+      <span class="mark">{{template "mark"}}</span>
+      <span class="wordmark">telesfor</span>
+    </a>
+    {{with .Version}}<span class="version">{{.}}</span>{{end}}
+    <div class="topbar-end">
+      <span class="pill pill-{{.State}}">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="pill-label">{{.StateLabel}}</span>
+      </span>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+  {{template "page" .}}
+</main>
+{{- end}}
+
+{{define "mark" -}}
+<svg viewBox="0 0 48 38" aria-hidden="true" focusable="false">
+  <path class="mark-aerial" d="M16 2 24 8.5 32 2"/>
+  <rect class="mark-body" x="1" y="8" width="46" height="29" rx="6"/>
+  <rect class="mark-screen" x="6" y="13" width="26" height="19" rx="3.5"/>
+  <rect x="8" y="15" width="5.5" height="15" fill="#e8457c"/>
+  <rect x="13.5" y="15" width="5.5" height="15" fill="#f5873a"/>
+  <rect x="19" y="15" width="5.5" height="15" fill="#f6c343"/>
+  <rect x="24.5" y="15" width="5.5" height="15" fill="#2bb3a3"/>
+  <circle class="mark-knob" cx="39.5" cy="18.5" r="2.7"/>
+  <circle class="mark-knob mark-light" cx="39.5" cy="27" r="2.7"/>
+</svg>
+{{- end}}

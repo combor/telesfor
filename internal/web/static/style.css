@@ -1,0 +1,483 @@
+/* telesfor web interface */
+
+:root {
+  color-scheme: light dark;
+
+  /* The test card's bars, used only for the logo and the header line. */
+  --stripe-1: #e8457c;
+  --stripe-2: #f5873a;
+  --stripe-3: #f6c343;
+  --stripe-4: #2bb3a3;
+  --stripe: linear-gradient(90deg, var(--stripe-1), var(--stripe-2) 38%, var(--stripe-3) 66%, var(--stripe-4));
+
+  --bg: #f6f6f8;
+  --surface: #ffffff;
+  --surface-2: #f1f1f4;
+  --border: #e6e6eb;
+  --border-strong: #d3d3db;
+  --text: #16161b;
+  --text-muted: #5f5f6b;
+
+  --accent-text: #c8285f;
+  --ok: #0b7568;
+  --ok-soft: #ddf4ef;
+
+  --mark-body: #1d1d24;
+  --mark-screen: #3a3a45;
+  --mark-knob: #f4f4f6;
+
+  --shadow: 0 1px 2px rgb(16 16 24 / 0.04), 0 10px 28px -12px rgb(16 16 24 / 0.1);
+  --radius: 16px;
+  --radius-sm: 12px;
+  /* Native UI fonts first; Linux's system-ui often maps to a Helvetica clone. */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "Adwaita Sans", Inter, system-ui, Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Adwaita Mono", "JetBrains Mono", "DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e0f12;
+    --surface: #16171b;
+    --surface-2: #1f2026;
+    --border: #26272e;
+    --border-strong: #34353e;
+    --text: #ececf1;
+    --text-muted: #a0a0ad;
+
+    --accent-text: #ff7eaa;
+    --ok: #52d6c4;
+    --ok-soft: rgb(82 214 196 / 0.1);
+
+    --mark-body: #2d2e37;
+    --mark-screen: #121317;
+    --mark-knob: #e9e9ee;
+
+    --shadow: 0 1px 0 rgb(255 255 255 / 0.02) inset;
+  }
+}
+
+/* Base */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, p { margin: 0; }
+h1, h2, h3 { text-wrap: balance; }
+p { text-wrap: pretty; }
+
+code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  padding: 0.1em 0.4em;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+/* Brand */
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 8px;
+}
+
+.mark {
+  display: inline-flex;
+  width: 34px;
+  flex: none;
+}
+
+.mark svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.mark-aerial {
+  fill: none;
+  stroke: var(--mark-body);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mark-body { fill: var(--mark-body); }
+.mark-screen { fill: var(--mark-screen); }
+.mark-knob { fill: var(--mark-knob); }
+
+/* The set's light is on while a channel is. */
+[data-state="on-air"] .mark-light {
+  fill: var(--stripe-1);
+  animation: blink 2s ease-in-out infinite;
+}
+
+.wordmark {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+/* Header */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding-top: env(safe-area-inset-top);
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  -webkit-backdrop-filter: saturate(1.8) blur(16px);
+  backdrop-filter: saturate(1.8) blur(16px);
+}
+
+.topbar::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 2px;
+  background: var(--stripe);
+}
+
+.topbar-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 12px 20px;
+}
+
+.version {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font: 500 11.5px/1.4 var(--mono);
+}
+
+.topbar-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* Tuner state */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 13px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+.pill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pill-on-air { background: var(--ok-soft); color: var(--ok); }
+.pill-on-air .dot { animation: pulse 2s ease-out infinite; }
+
+/* Layout */
+
+.container {
+  display: grid;
+  gap: 24px;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 20px calc(64px + env(safe-area-inset-bottom));
+}
+
+.page-title {
+  margin: 0 4px -4px;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.025em;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.lead { color: var(--text-muted); }
+
+.badge {
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge-ok { background: var(--ok-soft); color: var(--ok); }
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 4px 12px;
+}
+
+.section-head h2 {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.hint {
+  padding: 18px 20px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* What to enter in Plex */
+
+.guide { padding: 28px 28px 0; }
+
+.guide-head {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 24px;
+}
+
+.guide-head h2 {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+.guide-head .lead { max-width: 62ch; }
+
+.fieldset {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 8fr);
+  gap: 12px 40px;
+  padding: 24px 0;
+  border-top: 1px solid var(--border);
+}
+
+.fieldset-about h3 {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.fieldset-about p {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 13.5px;
+}
+
+/* One label width, so the lists of a page line up. */
+.values {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  align-content: start;
+  align-items: baseline;
+  gap: 10px 20px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.values dt { color: var(--text-muted); }
+
+.values dd {
+  min-width: 0;
+  margin: 0;
+}
+
+/* One click selects a value whole, to copy it. */
+.value {
+  -webkit-user-select: all;
+  user-select: all;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.for {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.guide-note {
+  padding: 18px 0 22px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.guide-note a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.guide-note a:hover { color: var(--text); }
+
+/* Channels */
+
+.channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.channel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 10px 8px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  transition: border-color 0.3s;
+}
+
+.channel:hover { border-color: var(--border-strong); }
+.channel-on-air { border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+
+.pos {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+.pos-ok { background: var(--ok-soft); color: var(--ok); }
+
+.channel-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* This server */
+
+.server { padding: 22px 28px 0; }
+.server .guide-note { margin-top: 22px; }
+
+/* Motion */
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 50%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 7px transparent; }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Phones */
+
+@media (max-width: 560px) {
+  .topbar-inner { gap: 10px; padding: 10px 16px; }
+  .version { display: none; }
+  .brand .mark { width: 30px; }
+  .wordmark { font-size: 16px; }
+
+  .container { gap: 20px; padding: 20px 16px calc(48px + env(safe-area-inset-bottom)); }
+  .page-title { font-size: 21px; }
+
+  .guide { padding: 22px 18px 0; }
+  .guide-head { padding-bottom: 20px; }
+  .server { padding: 18px 18px 0; }
+  .server .guide-note { margin-top: 18px; }
+
+  /* Labels go above their values, which need the width. */
+  .values {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+  }
+
+  .values dt { font-size: 12.5px; }
+  .values dd + dt { margin-top: 10px; }
+
+  .fieldset {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 20px 0;
+  }
+}

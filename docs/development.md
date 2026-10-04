@@ -24,6 +24,7 @@ flowchart LR
 | `internal/provider/tvp` | TVP channels, guide and stream URLs. |
 | `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy and startup alignment. |
 | `internal/tuner` | HDHomeRun emulation, streaming endpoints and the XMLTV guide. |
+| `internal/web` | The settings page: Go templates, htmx and a stylesheet, built into the binary. |
 | `cmd/telesfor` | Configuration and provider registration. |
 
 ## Streaming details

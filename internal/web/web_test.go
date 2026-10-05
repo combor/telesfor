@@ -141,6 +141,9 @@ func request(t *testing.T, server *httptest.Server, method, path string, body io
 		t.Fatal(err)
 	}
 	for i := 0; i+1 < len(header); i += 2 {
+		if header[i] == "Host" {
+			req.Host = header[i+1]
+		}
 		req.Header.Set(header[i], header[i+1])
 	}
 	client := *server.Client()
@@ -190,10 +193,10 @@ func TestTabs(t *testing.T) {
 			`hx-get="/ui/providers/fake" hx-trigger="every 5s"`,
 			`<header class="topbar" data-state="idle">`,
 			`<span class="version">v1.2.3</span>`,
-			`<a class="tab" href="/ui/providers/fake" aria-current="page">Fake<span class="tab-count">2</span></a>`,
-			`<a class="tab" href="/ui/providers/club">Club<span class="tab-count">0</span></a>`,
+			`<a class="tab" href="/ui/providers/fake" aria-current="page">Fake</a>`,
+			`<a class="tab" href="/ui/providers/club">Club</a>`,
 			`<a class="tab" href="/ui/server">Server</a>`,
-			// The addresses are the ones the page was asked for at.
+			// The addresses are where the page reached telesfor.
 			`<code class="value">`+server.URL+`</code>`,
 			`<code class="value">`+server.URL+`/xmltv.xml</code>`,
 			`>Startup settings</h2>`,
@@ -219,7 +222,7 @@ func TestTabs(t *testing.T) {
 	if missing := lacks(r.body,
 		"<title>Club — telesfor</title>",
 		`hx-get="/ui/providers/club" hx-trigger="every 5s"`,
-		`<a class="tab" href="/ui/providers/club" aria-current="page">Club<span class="tab-count">0</span></a>`,
+		`<a class="tab" href="/ui/providers/club" aria-current="page">Club</a>`,
 		`<code class="value">`+server.URL+`/club</code>`,
 		`<code class="value">`+server.URL+`/club/xmltv.xml</code>`,
 		`>Account</h2>`,
@@ -240,6 +243,17 @@ func TestTabs(t *testing.T) {
 		`<code class="value">:5004</code><p class="for"><code>-listen</code> or <code>TELESFOR_LISTEN</code></p>`,
 	); r.status != http.StatusOK || missing != nil || strings.Contains(r.body, "Connect Plex") {
 		t.Errorf("the server's tab = %d, lacks %q, or shows a provider's part:\n%s", r.status, missing, r.body)
+	}
+
+	// Asked for by a name, the addresses follow it. A reverse proxy asks by a
+	// name of its own: the addresses are then where the proxy found telesfor.
+	if r := get(t, server, "/ui/", "Host", "telesfor.example:5004"); !strings.Contains(r.body, `<code class="value">http://telesfor.example:5004/xmltv.xml</code>`) {
+		t.Errorf("tab asked for by a name lacks the name in its addresses:\n%s", r.body)
+	}
+	r = get(t, server, "/ui/providers/club", "Host", "telesfor.example", "X-Forwarded-For", "192.0.2.7")
+	if missing := lacks(r.body, `<code class="value">`+server.URL+`/club</code>`, `<code class="value">`+server.URL+`/club/xmltv.xml</code>`); missing != nil ||
+		strings.Contains(r.body, "telesfor.example") {
+		t.Errorf("tab asked for through a proxy lacks %q, or has the proxy's name:\n%s", missing, r.body)
 	}
 
 	// A refresh gets the part of the page that changes, not a second page.
@@ -282,7 +296,7 @@ func TestSignIn(t *testing.T) {
 	members.changed()
 	if missing := lacks(tab(),
 		`<span class="badge badge-ok">Signed in</span>`,
-		`Club<span class="tab-count">1</span></a>`,
+		`<span class="count">1</span>`,
 		`<span class="pos">1001</span>`,
 		`<button class="button">Sign out</button>`,
 	); missing != nil {
@@ -299,7 +313,7 @@ func TestSignIn(t *testing.T) {
 	}
 	// Every other tab says so too.
 	if missing := lacks(get(t, server, "/ui/server").body,
-		`<a class="tab" href="/ui/providers/club" title="Sign-in expired">Club<span class="tab-count tab-count-warn">1</span></a>`,
+		`<a class="tab" href="/ui/providers/club" title="Sign-in expired">Club<span class="tab-dot" aria-hidden="true"></span></a>`,
 	); missing != nil {
 		t.Errorf("another tab, with the club's sign-in expired, lacks %q", missing)
 	}
@@ -307,7 +321,7 @@ func TestSignIn(t *testing.T) {
 	if r := post(t, server, "/ui/providers/club/sign-out", nil); r.status != http.StatusSeeOther || r.header.Get("Location") != "/ui/providers/club" {
 		t.Fatalf("sign-out = %d to %q, want a redirect to the tab", r.status, r.header.Get("Location"))
 	}
-	if missing := lacks(tab(), `<span class="badge">Signed out</span>`, `Club<span class="tab-count">0</span></a>`); missing != nil {
+	if missing := lacks(tab(), `<span class="badge">Signed out</span>`, `<span class="count">0</span>`, `>Club</a>`); missing != nil {
 		t.Errorf("tab after signing out lacks %q", missing)
 	}
 }
@@ -334,7 +348,7 @@ func TestOwnSettings(t *testing.T) {
 	// The club is asked for its channels again.
 	if missing := lacks(get(t, server, "/ui/providers/club").body,
 		`<input name="lounge" value="Blue &amp; &lt;more&gt;">`,
-		`Club<span class="tab-count">1</span></a>`,
+		`<span class="count">1</span>`,
 		`<span class="pos">1001</span>`,
 		`title="Blue &amp; &lt;more&gt; lounge"`,
 	); missing != nil || members.lounge != "Blue & <more>" {
@@ -355,8 +369,8 @@ func TestOwnSettings(t *testing.T) {
 
 func TestOnAir(t *testing.T) {
 	tabs := []tab{
-		{Name: "Fake", Path: "/ui/providers/fake", Current: true, Count: "3", Streams: 3},
-		{Name: "Club", Path: "/ui/providers/club", Count: "0"},
+		{Name: "Fake", Path: "/ui/providers/fake", Current: true, Streams: 3},
+		{Name: "Club", Path: "/ui/providers/club"},
 	}
 	lineup := []tuner.Station{{Number: "1", Name: "One"}, {Number: "2", Name: "Two", Streams: 1}, {Number: "3", Name: "Three", Streams: 2}}
 	var page bytes.Buffer
@@ -368,8 +382,6 @@ func TestOnAir(t *testing.T) {
 		`<span class="pill pill-on-air">`,
 		`<span class="pill-label">On air</span>`,
 		`<span class="version">dev</span>`,
-		`Fake<span class="tab-count tab-count-ok">3</span></a>`,
-		`Club<span class="tab-count">0</span></a>`,
 		`<span class="pos">1</span>`,
 		`<span class="pos pos-ok">2</span>`,
 		`<span class="badge badge-ok">On air</span>`,

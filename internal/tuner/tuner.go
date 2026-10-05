@@ -142,7 +142,10 @@ func (t *Tuner) Provider() provider.Provider { return t.provider }
 
 // URL is the address the client reached the tuner at, so that the URLs it is
 // handed work from wherever it is.
-func (t *Tuner) URL(r *http.Request) string { return "http://" + r.Host + t.device.Path }
+func (t *Tuner) URL(r *http.Request) string { return t.Address(r.Host) }
+
+// Address is where the tuner is on a host, which may come with a port.
+func (t *Tuner) Address(host string) string { return "http://" + host + t.device.Path }
 
 // Station is a channel of the lineup, and how many streams of it are open.
 type Station struct {

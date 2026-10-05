@@ -4,6 +4,7 @@ import (
 	"context"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -38,8 +39,7 @@ type tab struct {
 	Name    string
 	Path    string
 	Current bool
-	Count   string // the provider's channels; the server's tab has none
-	Streams int    // open now, over those channels
+	Streams int    // open now, over the provider's channels
 	Problem string // what the provider needs seen to, such as a sign-in to renew
 }
 
@@ -85,9 +85,8 @@ func (f frame) StateLabel() string {
 func (h *Handler) frame(path string) frame {
 	f := frame{Version: displayVersion(h.Version)}
 	for _, p := range h.Providers {
-		lineup := p.Tuner.Lineup()
-		t := tab{Name: p.Tuner.Name(), Path: tabPath(p.Tuner.Provider()), Count: strconv.Itoa(len(lineup))}
-		for _, ch := range lineup {
+		t := tab{Name: p.Tuner.Name(), Path: tabPath(p.Tuner.Provider())}
+		for _, ch := range p.Tuner.Lineup() {
 			t.Streams += ch.Streams
 		}
 		if account, ok := p.Tuner.Provider().(provider.Account); ok {
@@ -168,8 +167,7 @@ func (h *Handler) find(r *http.Request) (Provider, bool) {
 	return Provider{}, false
 }
 
-// providerTab shows a provider's tab. The addresses are the ones the page was
-// asked for at.
+// providerTab shows a provider's tab.
 func (h *Handler) providerTab(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.find(r)
 	if !ok {
@@ -177,11 +175,12 @@ func (h *Handler) providerTab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t := p.Tuner
+	address := t.Address(reached(r))
 	view := providerView{
 		frame:    h.frame(tabPath(t.Provider())),
 		Name:     t.Name(),
-		Tuner:    t.URL(r),
-		Guide:    t.URL(r) + "/xmltv.xml",
+		Tuner:    address,
+		Guide:    address + "/xmltv.xml",
 		Settings: p.Settings,
 		Channels: t.Lineup(),
 	}
@@ -196,6 +195,19 @@ func (h *Handler) providerTab(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	render(w, r, providerPage, view)
+}
+
+// reached is the host the page reached telesfor at, for the addresses to enter
+// in Plex. A reverse proxy asks by a name of its own, which is not where Plex
+// finds the tuners: the address the proxy connected to is.
+func reached(r *http.Request) string {
+	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	for _, proxied := range []string{"X-Forwarded-For", "X-Forwarded-Host", "Forwarded"} {
+		if ok && r.Header.Get(proxied) != "" {
+			return local.String()
+		}
+	}
+	return r.Host
 }
 
 func (h *Handler) serverTab(w http.ResponseWriter, r *http.Request) {

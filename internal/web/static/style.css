@@ -270,15 +270,13 @@ code {
   box-shadow: var(--shadow);
 }
 
-.tab-count {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
+/* The provider needs seeing to, such as a sign-in to renew. */
+.tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
 }
-
-.tab-count-ok { color: var(--ok); }
-.tab-count-warn { color: var(--warn); }
 
 .card {
   background: var(--surface);

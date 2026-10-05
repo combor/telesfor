@@ -123,6 +123,9 @@ sign-in if it has one, as [Globoplay](#globoplay) does, its proxy, and its
 channels, marking the ones being watched. The **Server** tab shows the other
 settings telesfor was started with. The page refreshes every five seconds.
 
+The addresses are where your browser reached telesfor. Behind a reverse
+proxy, they are where the proxy reaches it.
+
 The page asks for no sign-in to telesfor itself: anyone who can reach
 telesfor can open it, and sign Globoplay in or out. It never shows the Globo
 account, and leaves out a proxy's user name and password.

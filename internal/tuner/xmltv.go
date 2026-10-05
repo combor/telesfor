@@ -48,49 +48,47 @@ type (
 // always agree on which channel is which.
 func (t *Tuner) xmltv(w http.ResponseWriter, r *http.Request) {
 	guide := xmlTV{Generator: "telesfor"}
-	for _, ch := range t.lineup {
+	lineup := t.channels()
+	channels := make([]provider.Channel, len(lineup))
+	numbers := map[string]string{} // the provider's channel id → lineup number
+	for i, ch := range lineup {
 		c := xmlChannel{ID: ch.number, Name: ch.Name}
 		if ch.Logo != "" {
 			c.Icon = &xmlIcon{ch.Logo}
 		}
 		guide.Channels = append(guide.Channels, c)
+		channels[i] = ch.Channel
+		numbers[ch.ID] = ch.number
 	}
 
-	from := time.Now().Truncate(time.Hour)
-	for _, p := range t.providers {
-		var channels []provider.Channel
-		numbers := map[string]string{} // the provider's channel id → lineup number
-		for _, ch := range t.lineup {
-			if ch.provider.Name() == p.Name() {
-				channels = append(channels, ch.Channel)
-				numbers[ch.ID] = ch.number
-			}
-		}
-
-		programmes, err := p.Programmes(r.Context(), channels, from, from.Add(guideSpan))
+	var programmes []provider.Programme
+	if len(channels) > 0 {
+		from := time.Now().Truncate(time.Hour)
+		var err error
+		programmes, err = t.provider.Programmes(r.Context(), channels, from, from.Add(guideSpan))
 		if err != nil {
 			// Better no answer than half a guide: Plex keeps the one it has.
-			slog.Error("guide failed", "provider", p.Name(), "err", err)
+			slog.Error("guide failed", "provider", t.provider.Name(), "err", err)
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		for _, programme := range programmes {
-			number, ok := numbers[programme.ChannelID]
-			if !ok {
-				continue
-			}
-			p := xmlProgramme{
-				Start:   programme.Start.Format(xmltvTime),
-				Stop:    programme.Stop.Format(xmltvTime),
-				Channel: number,
-				Title:   programme.Title,
-				Desc:    programme.Description,
-			}
-			if programme.Image != "" {
-				p.Icon = &xmlIcon{programme.Image}
-			}
-			guide.Programmes = append(guide.Programmes, p)
+	}
+	for _, programme := range programmes {
+		number, ok := numbers[programme.ChannelID]
+		if !ok {
+			continue
 		}
+		p := xmlProgramme{
+			Start:   programme.Start.Format(xmltvTime),
+			Stop:    programme.Stop.Format(xmltvTime),
+			Channel: number,
+			Title:   programme.Title,
+			Desc:    programme.Description,
+		}
+		if programme.Image != "" {
+			p.Icon = &xmlIcon{programme.Image}
+		}
+		guide.Programmes = append(guide.Programmes, p)
 	}
 
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")

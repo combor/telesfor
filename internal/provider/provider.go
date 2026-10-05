@@ -2,12 +2,14 @@
 // telesfor.
 //
 // To add a source, implement Provider in a package under internal/provider and
-// add it to the list in cmd/telesfor/main.go.
+// give it a tuner in cmd/telesfor/main.go.
 package provider
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -17,8 +19,8 @@ type Provider interface {
 	// Name is a short, URL-safe identifier, such as "tvp".
 	Name() string
 
-	// Channels lists the channels the provider can stream. It is called once,
-	// at startup.
+	// Channels lists the channels the provider can stream. It is called at
+	// startup, and again when an Account's channels change.
 	Channels(ctx context.Context) ([]Channel, error)
 
 	// Programmes returns the TV guide of the given channels between from and to.
@@ -34,6 +36,12 @@ type Channel struct {
 	ID   string // unique within the provider and stable over time
 	Name string
 	Logo string // URL of the channel's logo; optional
+
+	// Place is where the channel stands in the provider's lineup, from 1, for
+	// a provider that knows its channels beforehand. The channel then keeps
+	// its number when another comes or goes. Zero leaves it to the order the
+	// channels are listed in.
+	Place int
 }
 
 // Programme is an entry in the TV guide.
@@ -52,3 +60,57 @@ type Source struct {
 	URL    string
 	Client *http.Client
 }
+
+// Client returns the HTTP client for a provider's API and streams. When proxy
+// is set, everything goes through that HTTP proxy. Without one, the proxy
+// settings of the environment apply.
+func Client(proxy string) (*http.Client, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if proxy != "" {
+		proxyURL, err := url.Parse(proxy)
+		if err != nil || proxyURL.Host == "" {
+			return nil, fmt.Errorf("invalid proxy %q: want a URL like http://host:port", proxy)
+		}
+		transport.Proxy = http.ProxyURL(proxyURL)
+	}
+	return &http.Client{Transport: transport, Timeout: time.Minute}, nil
+}
+
+// Account is a Provider that streams to an account. The user signs in on the
+// provider's own site with a code telesfor shows them, so telesfor never sees
+// a password.
+type Account interface {
+	Provider
+
+	// SignIn asks the provider for a code and waits in the background for the
+	// user to enter it.
+	SignIn(ctx context.Context) error
+
+	// SignOut forgets the account, or the code the user has yet to enter.
+	SignOut() error
+
+	// Login reports where signing in stands.
+	Login() Login
+
+	// OnChange sets what to call when the provider's channels have changed.
+	OnChange(func())
+}
+
+// Login is where signing in to an Account stands.
+type Login struct {
+	State   LoginState
+	Code    string    // while Pending: what the user enters at URL
+	URL     string    // while Pending: where the user enters Code
+	Expires time.Time // while Pending: when Code stops working
+	Problem string    // what went wrong last, in words for the user; optional
+}
+
+// LoginState is a step of signing in.
+type LoginState int
+
+const (
+	SignedOut LoginState = iota
+	Pending              // waiting for the user to enter the code
+	SignedIn
+	Expired // the provider no longer accepts the sign-in: the user has to sign in again
+)

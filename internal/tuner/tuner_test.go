@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,11 +24,15 @@ import (
 type fake struct {
 	signal   bool
 	manifest string // where its streams are, if anywhere real
+	off      *bool  // set while it has no channels to offer
 }
 
 func (fake) Name() string { return "fake" }
 
-func (fake) Channels(context.Context) ([]provider.Channel, error) {
+func (f fake) Channels(context.Context) ([]provider.Channel, error) {
+	if f.off != nil && *f.off {
+		return nil, nil
+	}
 	return []provider.Channel{
 		{ID: "one", Name: "One", Logo: "https://example.com/one.png"},
 		{ID: "two", Name: "Two"},
@@ -49,11 +55,14 @@ func (f fake) Stream(context.Context, string) (provider.Source, error) {
 	return provider.Source{URL: cmp.Or(f.manifest, "https://example.com/master.m3u8")}, nil
 }
 
+// device is the tuner's in most tests: at the root, numbered from 1.
+var device = Device{ID: "0BADCAFE", Name: "Fake", First: 1}
+
 // request sends a request to a tuner offering the channels of p. The tuner has
 // no remuxer, so a request that gets as far as streaming panics.
 func request(t *testing.T, p provider.Provider, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
-	tuner, err := New(t.Context(), []provider.Provider{p}, nil)
+	tuner, err := New(t.Context(), p, nil, device)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,17 +78,129 @@ func get(t *testing.T, path string) *httptest.ResponseRecorder {
 }
 
 func TestDiscover(t *testing.T) {
-	var device struct{ BaseURL, LineupURL, DeviceID string }
-	if err := json.Unmarshal(get(t, "/discover.json").Body.Bytes(), &device); err != nil {
+	var got struct{ BaseURL, LineupURL, DeviceID, FriendlyName string }
+	if err := json.Unmarshal(get(t, "/discover.json").Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
 
 	// The URLs must point back at the address the client used.
-	if device.BaseURL != "http://plex.local:5004" || device.LineupURL != "http://plex.local:5004/lineup.json" {
-		t.Errorf("discover.json points at %q and %q, want the request's host", device.BaseURL, device.LineupURL)
+	if got.BaseURL != "http://plex.local:5004" || got.LineupURL != "http://plex.local:5004/lineup.json" {
+		t.Errorf("discover.json points at %q and %q, want the request's host", got.BaseURL, got.LineupURL)
 	}
-	if device.DeviceID == "" {
-		t.Error("discover.json has no DeviceID")
+	if got.DeviceID != "0BADCAFE" || got.FriendlyName != "telesfor Fake" {
+		t.Errorf("discover.json names the device %q, %q", got.DeviceID, got.FriendlyName)
+	}
+}
+
+// TestTunerAtAPath checks a tuner beside the root's: Plex is given the path as
+// part of the tuner's address, so every URL it is handed has to carry it.
+func TestTunerAtAPath(t *testing.T) {
+	off := false
+	tuner, err := New(t.Context(), fake{off: &off}, nil, Device{ID: "0BADCAFE", Name: "Fake", Path: "/fake", First: 1001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	tuner.Register(mux)
+	get := func(path string, v any) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://plex.local:5004"+path, nil))
+		if err := json.Unmarshal(recorder.Body.Bytes(), v); err != nil {
+			t.Fatalf("%s = %d %s: %v", path, recorder.Code, recorder.Body, err)
+		}
+	}
+
+	var got struct{ BaseURL, LineupURL string }
+	get("/fake/discover.json", &got)
+	if got.BaseURL != "http://plex.local:5004/fake" || got.LineupURL != "http://plex.local:5004/fake/lineup.json" {
+		t.Errorf("discover.json points at %q and %q, want the tuner's path", got.BaseURL, got.LineupURL)
+	}
+	type entry struct{ GuideNumber, GuideName, URL string }
+	var lineup []entry
+	get("/fake/lineup.json", &lineup)
+	want := []entry{
+		{"1001", "One", "http://plex.local:5004/fake/stream/fake/one"},
+		{"1002", "Two", "http://plex.local:5004/fake/stream/fake/two"},
+	}
+	if !slices.Equal(lineup, want) {
+		t.Errorf("lineup.json = %v, want %v", lineup, want)
+	}
+
+	// The provider's channels change when its account does.
+	off = true
+	if err := tuner.Scan(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if get("/fake/lineup.json", &lineup); len(lineup) != 0 {
+		t.Errorf("lineup.json after the provider lost its channels = %v", lineup)
+	}
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://plex.local:5004/fake/xmltv.xml", nil))
+	var guide xmlTV
+	if err := xml.Unmarshal(recorder.Body.Bytes(), &guide); err != nil || len(guide.Channels)+len(guide.Programmes) != 0 {
+		t.Errorf("guide of an empty lineup = %d %s, %v: want an empty guide", recorder.Code, recorder.Body, err)
+	}
+}
+
+// placed is a provider that knows where its channels stand, and has lost the
+// one between these two.
+type placed struct{ fake }
+
+func (placed) Channels(context.Context) ([]provider.Channel, error) {
+	return []provider.Channel{{ID: "one", Name: "One", Place: 1}, {ID: "three", Name: "Three", Place: 3}}, nil
+}
+
+func TestPlacedChannelsKeepTheirNumbers(t *testing.T) {
+	tuner, err := New(t.Context(), placed{}, nil, Device{ID: "0BADCAFE", Name: "Fake", First: 1001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Station{{"1001", "One", 0}, {"1003", "Three", 0}}; !reflect.DeepEqual(tuner.Lineup(), want) {
+		t.Errorf("lineup = %+v, want %+v", tuner.Lineup(), want)
+	}
+}
+
+// slow is a provider that is held up the first time it lists its channels.
+type slow struct {
+	fake
+	asked, answer chan struct{}
+	held          atomic.Bool
+}
+
+func (s *slow) Channels(ctx context.Context) ([]provider.Channel, error) {
+	channels, err := s.fake.Channels(ctx) // as they are when asked
+	if s.held.CompareAndSwap(false, true) {
+		close(s.asked)
+		<-s.answer
+	}
+	return channels, err
+}
+
+// TestScansDoNotOvertake checks that a scan held up at the provider cannot
+// publish its lineup over that of a scan started after it.
+func TestScansDoNotOvertake(t *testing.T) {
+	off := false
+	p := &slow{fake: fake{off: &off}, asked: make(chan struct{}), answer: make(chan struct{})}
+	tuner := &Tuner{provider: p, device: device}
+	first, second := make(chan error, 1), make(chan error, 1)
+	go func() { first <- tuner.Scan(t.Context()) }()
+	<-p.asked
+	off = true // the provider loses its channels, and says so
+	go func() { second <- tuner.Scan(t.Context()) }()
+	overtook := false
+	select {
+	case <-second:
+		overtook = true
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(p.answer)
+	<-first
+	if !overtook {
+		<-second
+	}
+	if lineup := tuner.Lineup(); len(lineup) != 0 {
+		t.Errorf("lineup after the provider lost its channels = %+v, want none", lineup)
 	}
 }
 
@@ -169,7 +290,7 @@ func TestLineupCountsStreams(t *testing.T) {
 	defer upstream.Close()
 	defer close(hold)
 
-	tuner, err := New(t.Context(), []provider.Provider{fake{signal: true, manifest: upstream.URL + "/master.m3u8"}}, remuxer)
+	tuner, err := New(t.Context(), fake{signal: true, manifest: upstream.URL + "/master.m3u8"}, remuxer, device)
 	if err != nil {
 		t.Fatal(err)
 	}

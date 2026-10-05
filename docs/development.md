@@ -6,9 +6,14 @@ For installation and command-line options, see the [usage guide](usage.md).
 
 ## How it works
 
-telesfor presents streaming providers as an HDHomeRun network tuner. Plex
+telesfor presents each streaming provider as an HDHomeRun network tuner. Plex
 reads `/discover.json` and `/lineup.json` for the device and channels, and
 `/xmltv.xml` for the guide. Tuning a channel opens its `/stream/…` URL.
+
+Each provider has a tuner of its own, with its own guide: TVP's at the root,
+and the others at a path, such as `/globo`. Plex takes them as devices of one
+DVR and shows a single channel list, sorted by number. So each tuner numbers
+its channels in a range of its own, which keeps a provider's channels together.
 
 ```mermaid
 flowchart LR
@@ -22,10 +27,12 @@ flowchart LR
 |---|---|
 | `internal/provider` | The contract every TV source implements. |
 | `internal/provider/tvp` | TVP channels, guide and stream URLs. |
+| `internal/provider/globo` | Globoplay's sign-in, channels, guide and stream URLs. |
+| `internal/store` | The bbolt database that keeps sign-ins across restarts. |
 | `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy and startup alignment. |
 | `internal/tuner` | HDHomeRun emulation, streaming endpoints and the XMLTV guide. |
 | `internal/web` | The settings page: Go templates, htmx and a stylesheet, built into the binary. |
-| `cmd/telesfor` | Configuration and provider registration. |
+| `cmd/telesfor` | Configuration, and a tuner for each provider. |
 
 ## Streaming details
 
@@ -79,9 +86,13 @@ type Provider interface {
 }
 ```
 
-Then add it to the list in `cmd/telesfor/main.go`. Its channels join the lineup
-after those of the providers before it. Each stream returns a `Source` with
-its URL and the HTTP client used to fetch it.
+Then give it a tuner in `cmd/telesfor/main.go`: a device ID, a path and a
+range of channel numbers of its own. Each stream returns a `Source` with its
+URL and the HTTP client used to fetch it.
+
+A provider that streams to an account also implements `provider.Account`.
+The settings page then offers its sign-in, by a code the user enters on the
+provider's own site.
 
 ## Tests
 
@@ -100,6 +111,14 @@ API, which CI does daily:
 
 ```sh
 TELESFOR_LIVE=1 go test -count=1 -v -run TestLive ./internal/provider/tvp
+```
+
+Globoplay's needs a telesfor that has signed in, stopped for the test, and a
+Brazilian connection, so CI does not run it:
+
+```sh
+TELESFOR_LIVE=1 TELESFOR_DATA=<data directory> TELESFOR_GLOBO_PROXY='http://<proxy-host>:<port>' \
+  go test -count=1 -v -run TestLive ./internal/provider/globo
 ```
 
 To test the container image, which CI also does on every push:

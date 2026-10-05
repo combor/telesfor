@@ -1,6 +1,7 @@
 *
 !Dockerfile
 !go.mod
+!go.sum
 !LICENSE
 !cmd/
 !cmd/**

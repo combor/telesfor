@@ -4,6 +4,9 @@
 // It serves the handful of endpoints Plex asks for: discover.json and
 // lineup.json describe the device and its channels, xmltv.xml carries the TV
 // guide, and /stream/… is a channel as MPEG-TS.
+//
+// Every provider gets a tuner of its own, with its own guide. Plex takes them
+// as devices of one DVR and lists their channels together, sorted by number.
 package tuner
 
 import (
@@ -15,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,40 +26,50 @@ import (
 	"github.com/combor/telesfor/internal/remux"
 )
 
-const (
-	deviceID   = "7E1E5F04" // any 8 hex digits; Plex tells tuners apart by them
-	tunerCount = 4          // how many streams Plex may open at once
-)
+const tunerCount = 4 // how many streams Plex may open at once
 
-// Tuner is an http.Handler that emulates an HDHomeRun.
+// Device is what tells one tuner from another.
+type Device struct {
+	ID   string // any 8 hex digits; Plex tells tuners apart by them
+	Name string // the provider's name for people, such as "TVP"
+	Path string // where the tuner is served, such as "/globo"; empty for the root
+
+	// First is the GuideNumber of the first channel. Plex sorts the channels
+	// of all tuners by number, so ranges that do not overlap keep each
+	// provider's channels together.
+	First int
+}
+
+// Tuner is an http.Handler that emulates an HDHomeRun with the channels of a
+// provider.
 type Tuner struct {
-	providers []provider.Provider
-	lineup    []channel
-	remux     *remux.Remuxer
-	mux       *http.ServeMux
+	provider provider.Provider
+	device   Device
+	remux    *remux.Remuxer
+	mux      *http.ServeMux
+	scanning sync.Mutex                // one Scan at a time
+	lineup   atomic.Pointer[[]channel] // replaced whole by Scan
 }
 
 // channel is a provider's channel with its place in the lineup.
 type channel struct {
 	provider.Channel
-	number   string            // GuideNumber in Plex, and the channel's id in the guide
-	provider provider.Provider // where the channel comes from
-	streams  *atomic.Int32     // how many streams of it are open
+	number  string        // GuideNumber in Plex, and the channel's id in the guide
+	streams *atomic.Int32 // how many streams of it are open
 }
 
-// New asks the providers for their channels and returns a tuner that offers
-// them all, numbered from 1 in the order given.
-func New(ctx context.Context, providers []provider.Provider, remuxer *remux.Remuxer) (*Tuner, error) {
-	t := &Tuner{providers: providers, remux: remuxer, mux: http.NewServeMux()}
-	for _, p := range providers {
-		channels, err := p.Channels(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, c := range channels {
-			number := strconv.Itoa(len(t.lineup) + 1)
-			t.lineup = append(t.lineup, channel{c, number, p, new(atomic.Int32)})
-		}
+// New returns a tuner that offers the channels of p.
+func New(ctx context.Context, p provider.Provider, remuxer *remux.Remuxer, device Device) (*Tuner, error) {
+	t := &Tuner{provider: p, device: device, remux: remuxer, mux: http.NewServeMux()}
+	if err := t.Scan(ctx); err != nil {
+		return nil, err
+	}
+	if account, ok := p.(provider.Account); ok {
+		account.OnChange(func() {
+			if err := t.Scan(context.Background()); err != nil {
+				slog.Error("scan failed", "provider", p.Name(), "err", err)
+			}
+		})
 	}
 
 	t.mux.HandleFunc("GET /discover.json", t.discover)
@@ -67,17 +81,68 @@ func New(ctx context.Context, providers []provider.Provider, remuxer *remux.Remu
 	return t, nil
 }
 
+// Scan asks the provider for its channels and numbers them from the device's
+// first number, by their place if the provider gives one and in the order
+// given otherwise.
+func (t *Tuner) Scan(ctx context.Context) error {
+	// Two scans at once could publish their lineups in the wrong order.
+	t.scanning.Lock()
+	defer t.scanning.Unlock()
+	channels, err := t.provider.Channels(ctx)
+	if err != nil {
+		return err
+	}
+	open := map[string]*atomic.Int32{} // a channel that stays keeps its viewers
+	for _, ch := range t.channels() {
+		open[ch.ID] = ch.streams
+	}
+	lineup := make([]channel, len(channels))
+	for i, c := range channels {
+		streams := open[c.ID]
+		if streams == nil {
+			streams = new(atomic.Int32)
+		}
+		place := i
+		if c.Place > 0 {
+			place = c.Place - 1
+		}
+		lineup[i] = channel{c, strconv.Itoa(t.device.First + place), streams}
+	}
+	t.lineup.Store(&lineup)
+	return nil
+}
+
+func (t *Tuner) channels() []channel {
+	if lineup := t.lineup.Load(); lineup != nil {
+		return *lineup
+	}
+	return nil
+}
+
+// Register serves the tuner on mux, at its device's path.
+func (t *Tuner) Register(mux *http.ServeMux) {
+	mux.Handle(t.device.Path+"/", http.StripPrefix(t.device.Path, t))
+}
+
 // ServeHTTP implements http.Handler.
 func (t *Tuner) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	began := time.Now()
 	resp := &response{ResponseWriter: w}
 	t.mux.ServeHTTP(resp, r)
-	slog.Debug("request", "method", r.Method, "path", r.URL.Path, "from", r.RemoteAddr,
+	// Register strips the device's path, which the log needs to tell tuners apart.
+	slog.Debug("request", "method", r.Method, "path", t.device.Path+r.URL.Path, "from", r.RemoteAddr,
 		"status", cmp.Or(resp.status, http.StatusOK), "bytes", resp.sent, "took", since(began))
 }
 
-// Channels reports how many channels are in the lineup.
-func (t *Tuner) Channels() int { return len(t.lineup) }
+// Name is the provider's name for people.
+func (t *Tuner) Name() string { return t.device.Name }
+
+// Provider is where the tuner's channels come from.
+func (t *Tuner) Provider() provider.Provider { return t.provider }
+
+// URL is the address the client reached the tuner at, so that the URLs it is
+// handed work from wherever it is.
+func (t *Tuner) URL(r *http.Request) string { return "http://" + r.Host + t.device.Path }
 
 // Station is a channel of the lineup, and how many streams of it are open.
 type Station struct {
@@ -88,8 +153,9 @@ type Station struct {
 
 // Lineup lists the channels in the order Plex shows them.
 func (t *Tuner) Lineup() []Station {
-	stations := make([]Station, len(t.lineup))
-	for i, ch := range t.lineup {
+	lineup := t.channels()
+	stations := make([]Station, len(lineup))
+	for i, ch := range lineup {
 		stations[i] = Station{ch.number, ch.Name, int(ch.streams.Load())}
 	}
 	return stations
@@ -98,16 +164,16 @@ func (t *Tuner) Lineup() []Station {
 // discover describes the device. Plex reads it when the tuner is added.
 func (t *Tuner) discover(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
-		"FriendlyName":    "telesfor",
+		"FriendlyName":    "telesfor " + t.device.Name,
 		"Manufacturer":    "Silicondust",
 		"ModelNumber":     "HDTC-2US",
 		"FirmwareName":    "hdhomeruntc_atsc",
 		"FirmwareVersion": "20150826",
-		"DeviceID":        deviceID,
+		"DeviceID":        t.device.ID,
 		"DeviceAuth":      "telesfor",
 		"TunerCount":      tunerCount,
-		"BaseURL":         BaseURL(r),
-		"LineupURL":       BaseURL(r) + "/lineup.json",
+		"BaseURL":         t.URL(r),
+		"LineupURL":       t.URL(r) + "/lineup.json",
 	})
 }
 
@@ -125,19 +191,20 @@ func (t *Tuner) lineupStatus(w http.ResponseWriter, r *http.Request) {
 func (t *Tuner) lineupJSON(w http.ResponseWriter, r *http.Request) {
 	type entry struct{ GuideNumber, GuideName, URL string }
 
-	entries := make([]entry, 0, len(t.lineup)) // an empty lineup is [], not null
-	for _, ch := range t.lineup {
+	lineup := t.channels()
+	entries := make([]entry, 0, len(lineup)) // an empty lineup is [], not null
+	for _, ch := range lineup {
 		entries = append(entries, entry{
 			GuideNumber: ch.number,
 			GuideName:   ch.Name,
-			URL:         BaseURL(r) + "/stream/" + ch.provider.Name() + "/" + url.PathEscape(ch.ID),
+			URL:         t.URL(r) + "/stream/" + t.provider.Name() + "/" + url.PathEscape(ch.ID),
 		})
 	}
 	writeJSON(w, entries)
 }
 
 // scan answers Plex's request to scan for channels. There is nothing to scan:
-// the lineup is known from the start.
+// the lineup is known already.
 func (t *Tuner) scan(w http.ResponseWriter, r *http.Request) {}
 
 // stream serves a channel as MPEG-TS for as long as the viewer stays connected.
@@ -149,7 +216,7 @@ func (t *Tuner) stream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tuned := time.Now()
-	source, err := ch.provider.Stream(r.Context(), ch.ID)
+	source, err := t.provider.Stream(r.Context(), ch.ID)
 	if err != nil {
 		slog.Error("tune failed", "channel", ch.Name, "viewer", r.RemoteAddr, "err", err)
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -186,8 +253,11 @@ func (t *Tuner) stream(w http.ResponseWriter, r *http.Request) {
 
 // find looks a channel up by its provider's name and its id within the provider.
 func (t *Tuner) find(providerName, id string) (channel, bool) {
-	for _, ch := range t.lineup {
-		if ch.provider.Name() == providerName && ch.ID == id {
+	if providerName != t.provider.Name() {
+		return channel{}, false
+	}
+	for _, ch := range t.channels() {
+		if ch.ID == id {
 			return ch, true
 		}
 	}
@@ -229,10 +299,6 @@ func (r *response) Write(p []byte) (int, error) {
 	r.sent += int64(n)
 	return n, err
 }
-
-// BaseURL is the address the client reached the tuner at, so that the URLs it
-// is handed work from wherever it is.
-func BaseURL(r *http.Request) string { return "http://" + r.Host }
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")

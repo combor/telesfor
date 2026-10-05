@@ -4,30 +4,56 @@
   <section class="card guide" aria-labelledby="plex-title">
     <header class="guide-head">
       <h2 id="plex-title">Connect Plex</h2>
-      <p class="lead">Add telesfor to Plex as a tuner, then point Plex at its guide.</p>
+      <p class="lead">Each provider is a tuner with a guide of its own. Set the first up in Plex as a DVR, then add the others to that DVR as further devices.</p>
     </header>
+    {{- range .Providers}}
     <div class="fieldset">
       <div class="fieldset-about">
-        <h3>Tuner</h3>
-        <p>Settings → Live TV &amp; DVR → Set Up Plex DVR</p>
+        <h3>{{.Name}}</h3>
+        <p>{{if .Channels}}{{len .Channels}} channel{{if ne (len .Channels) 1}}s{{end}}{{else if .Account}}No channels until you sign in{{else}}No channels{{end}}</p>
       </div>
       <dl class="values">
-        <dt>Address</dt>
-        <dd><code class="value">{{.Tuner}}</code><p class="for">Plex doesn’t find telesfor by itself. Enter the address by hand.</p></dd>
-      </dl>
-    </div>
-    <div class="fieldset">
-      <div class="fieldset-about">
-        <h3>Guide</h3>
-        <p>Once the channels appear, choose an XMLTV guide</p>
-      </div>
-      <dl class="values">
+        <dt>Tuner</dt>
+        <dd><code class="value">{{.Tuner}}</code></dd>
         <dt>XMLTV guide</dt>
         <dd><code class="value">{{.Guide}}</code></dd>
       </dl>
     </div>
-    <p class="guide-note">The addresses are the ones this page was opened with. If Plex reaches telesfor another way, such as by a Docker service name, use that host instead.</p>
+    {{- end}}
+    <p class="guide-note">In Plex, go to Settings → Live TV &amp; DVR → Set Up Plex DVR. Plex doesn’t find telesfor by itself: enter the tuner’s address by hand, then choose an XMLTV guide once the channels appear. The addresses are the ones this page was opened with. If Plex reaches telesfor another way, such as by a Docker service name, use that host instead.</p>
   </section>
+
+  {{- range $p := .Providers}}{{with $p.Account}}
+  <section aria-labelledby="{{$p.ID}}-account-title">
+    <div class="section-head">
+      <h2 id="{{$p.ID}}-account-title">{{$p.Name}} account</h2>
+      <span class="badge{{if .SignedIn}} badge-ok{{else if .Expired}} badge-warn{{end}}">{{.Label}}</span>
+    </div>
+    <div class="card account">
+      {{- if .Pending}}
+      <p>Open <a href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Site}}</a>, sign in to your account there, and enter this code:</p>
+      <p><code class="value code">{{.Code}}</code></p>
+      <p class="for">telesfor is waiting for {{$p.Name}} to confirm. The code works for another {{.Left}}.</p>
+      <form method="post" action="/ui/providers/{{$p.ID}}/sign-out"><button class="button">Cancel</button></form>
+      {{- else if .SignedIn}}
+      <p>telesfor is signed in to {{$p.Name}}. Signing out takes its channels off the tuner.</p>
+      <form method="post" action="/ui/providers/{{$p.ID}}/sign-out"><button class="button">Sign out</button></form>
+      {{- else if .Expired}}
+      <p>{{$p.Name}} no longer accepts the sign-in. Sign in again to keep its channels playing.</p>
+      <div class="actions">
+        <form method="post" action="/ui/providers/{{$p.ID}}/sign-in"><button class="button button-primary">Sign in again</button></form>
+        <form method="post" action="/ui/providers/{{$p.ID}}/sign-out"><button class="button">Sign out</button></form>
+      </div>
+      {{- else}}
+      <p>Sign in to get {{$p.Name}}’s channels. telesfor shows a code to enter on {{$p.Name}}’s own site, so it never sees your password.</p>
+      <form method="post" action="/ui/providers/{{$p.ID}}/sign-in"><button class="button button-primary">Sign in</button></form>
+      {{- end}}
+      {{- with .Problem}}
+      <p class="problem" role="status">{{.}}</p>
+      {{- end}}
+    </div>
+  </section>
+  {{- end}}{{end}}
 
   <section aria-labelledby="server-title">
     <div class="section-head">
@@ -48,9 +74,10 @@
     </div>
   </section>
 
-  <section aria-labelledby="channels-title">
+  {{- range .Providers}}
+  <section aria-labelledby="{{.ID}}-channels-title">
     <div class="section-head">
-      <h2 id="channels-title">Channels</h2>
+      <h2 id="{{.ID}}-channels-title">{{.Name}} channels</h2>
       <span class="count">{{len .Channels}}</span>
     </div>
     {{- if .Channels}}
@@ -65,8 +92,11 @@
       </li>
       {{- end}}
     </ul>
+    {{- else if .Account}}
+    <p class="hint">{{.Name}} has channels for an account. Sign in above to get them.</p>
     {{- else}}
-    <p class="hint">The providers offered no channels. telesfor asks them when it starts.</p>
+    <p class="hint">{{.Name}} offered no channels. telesfor asks when it starts.</p>
     {{- end}}
   </section>
+  {{- end}}
 {{- end}}

@@ -9,9 +9,12 @@ After=network-online.target
 
 [Service]
 Type=exec
-# telesfor keeps nothing on disk, so it needs no account of its own. This also
-# makes the system read-only to it and gives it a private /tmp.
+# telesfor needs no account of its own: systemd keeps its data, the sign-ins
+# to providers, in /var/lib/telesfor. This also makes the rest of the system
+# read-only to it and gives it a private /tmp.
 DynamicUser=true
+StateDirectory=telesfor
+Environment=TELESFOR_DATA=%S/telesfor
 EnvironmentFile=/etc/telesfor/telesfor.env
 ExecStart=/usr/bin/telesfor
 Restart=on-failure

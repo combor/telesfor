@@ -5,15 +5,15 @@ FROM --platform=$BUILDPLATFORM golang@sha256:433790e515d27dc6003e847e644cc0af956
 
 WORKDIR /src
 
-# telesfor has no dependencies: there is no go.sum, and nothing to download.
-COPY go.mod ./
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
-RUN --mount=type=cache,target=/root/.cache/go-build \
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o /telesfor ./cmd/telesfor
 
@@ -25,7 +25,11 @@ LABEL org.opencontainers.image.title="telesfor" \
       org.opencontainers.image.source="https://github.com/combor/telesfor" \
       org.opencontainers.image.licenses="BSD-3-Clause"
 
-RUN apk add --no-cache ffmpeg
+# /data keeps the sign-ins to providers. Mount a volume there to keep them
+# when the container is replaced.
+RUN apk add --no-cache ffmpeg && install -d -o 65532 -g 65532 -m 700 /data
+ENV TELESFOR_DATA=/data
+VOLUME /data
 
 COPY --from=build /telesfor /usr/local/bin/telesfor
 COPY LICENSE /usr/share/licenses/telesfor/LICENSE

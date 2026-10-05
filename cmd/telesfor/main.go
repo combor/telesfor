@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -11,11 +12,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/globo"
 	"github.com/combor/telesfor/internal/provider/tvp"
 	"github.com/combor/telesfor/internal/remux"
+	"github.com/combor/telesfor/internal/store"
 	"github.com/combor/telesfor/internal/tuner"
 	"github.com/combor/telesfor/internal/web"
 )
@@ -28,6 +32,10 @@ func main() {
 		"address to listen on (env TELESFOR_LISTEN)")
 	tvpProxy := flag.String("tvp-proxy", os.Getenv("TELESFOR_TVP_PROXY"),
 		"HTTP proxy for TVP, which blocks most channels outside Poland (env TELESFOR_TVP_PROXY)")
+	globoProxy := flag.String("globo-proxy", os.Getenv("TELESFOR_GLOBO_PROXY"),
+		"HTTP proxy for Globoplay, which blocks its channels outside Brazil (env TELESFOR_GLOBO_PROXY)")
+	data := flag.String("data", dataDir(),
+		"directory to keep sign-ins in (env TELESFOR_DATA)")
 	debug := flag.Bool("debug", os.Getenv("TELESFOR_DEBUG") != "",
 		"also log every request, every upstream fetch and ffmpeg's warnings (env TELESFOR_DEBUG)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
@@ -49,56 +57,98 @@ func main() {
 	if *debug {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
-	if err := run(*listen, *tvpProxy, *debug); err != nil {
+	if err := run(*listen, *tvpProxy, *globoProxy, *data, *debug); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(listen, tvpProxy string, debug bool) error {
+func run(listen, tvpProxy, globoProxy, data string, debug bool) error {
+	if data == "" {
+		return errors.New("no home directory to keep sign-ins in: set -data")
+	}
+	db, err := store.Open(data)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
 	tvpProvider, err := tvp.New(tvpProxy)
 	if err != nil {
 		return err
 	}
+	globoProvider, err := globo.New(globoProxy, db)
+	if err != nil {
+		return err
+	}
 
-	// Every TV source plugs in here.
-	providers := []provider.Provider{
-		tvpProvider,
+	// Every TV source plugs in here, with a tuner of its own. TVP's is at the
+	// root, where Plex has known it since it was the only one.
+	sources := []struct {
+		provider.Provider
+		tuner.Device
+	}{
+		{tvpProvider, tuner.Device{ID: "7E1E5F04", Name: "TVP", First: 1}},
+		{globoProvider, tuner.Device{ID: "7E1E5F05", Name: "Globoplay", Path: "/globo", First: 1001}},
 	}
 
 	remuxer, err := remux.New()
 	if err != nil {
 		return err
 	}
-	t, err := tuner.New(context.Background(), providers, remuxer)
-	if err != nil {
-		return err
-	}
-
 	mux := http.NewServeMux()
-	mux.Handle("/", t)
-	(&web.Handler{Tuner: t, Settings: settings(listen, tvpProxy, debug), Version: version}).Register(mux)
+	var tuners []*tuner.Tuner
+	channels := 0
+	for _, source := range sources {
+		t, err := tuner.New(context.Background(), source.Provider, remuxer, source.Device)
+		if err != nil {
+			return err
+		}
+		t.Register(mux)
+		tuners = append(tuners, t)
+		channels += len(t.Lineup())
+	}
+	(&web.Handler{Tuners: tuners, Settings: settings(listen, tvpProxy, globoProxy, data, debug), Version: version}).Register(mux)
 
-	slog.Info("telesfor is on the air", "version", version, "listen", listen, "channels", t.Channels())
+	slog.Info("telesfor is on the air", "version", version, "listen", listen, "channels", channels)
 	return http.ListenAndServe(listen, mux)
 }
 
-// settings is how telesfor was started, for the settings page.
-func settings(listen, tvpProxy string, debug bool) []web.Setting {
-	proxy := web.Setting{Name: "TVP proxy", State: "Not set", Flag: "-tvp-proxy", Env: "TELESFOR_TVP_PROXY"}
-	if u, err := url.Parse(tvpProxy); err == nil && u.Host != "" {
-		u.User = nil // the page is open to whoever can reach the tuner
-		proxy.Value, proxy.State = u.String(), ""
+// dataDir is where telesfor keeps its data unless told otherwise, or empty for
+// an account without a home.
+func dataDir() string {
+	if dir := os.Getenv("TELESFOR_DATA"); dir != "" {
+		return dir
 	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "telesfor")
+}
+
+// settings is how telesfor was started, for the settings page.
+func settings(listen, tvpProxy, globoProxy, data string, debug bool) []web.Setting {
 	logging := "Off"
 	if debug {
 		logging = "On"
 	}
 	return []web.Setting{
 		{Name: "Listen address", Value: listen, Flag: "-listen", Env: "TELESFOR_LISTEN"},
-		proxy,
+		proxySetting("TVP proxy", tvpProxy, "-tvp-proxy", "TELESFOR_TVP_PROXY"),
+		proxySetting("Globoplay proxy", globoProxy, "-globo-proxy", "TELESFOR_GLOBO_PROXY"),
+		{Name: "Data directory", Value: data, Flag: "-data", Env: "TELESFOR_DATA"},
 		{Name: "Debug logging", State: logging, Flag: "-debug", Env: "TELESFOR_DEBUG"},
 	}
+}
+
+func proxySetting(name, proxy, flag, env string) web.Setting {
+	setting := web.Setting{Name: name, State: "Not set", Flag: flag, Env: env}
+	if u, err := url.Parse(proxy); err == nil && u.Host != "" {
+		u.User = nil // the page is open to whoever can reach the tuner
+		setting.Value, setting.State = u.String(), ""
+	}
+	return setting
 }
 
 // checkHealth asks the telesfor that listens on the given address whether it is

@@ -21,6 +21,8 @@
   --accent-text: #c8285f;
   --ok: #0b7568;
   --ok-soft: #ddf4ef;
+  --warn: #8a5300;
+  --warn-soft: #fbeed6;
 
   --mark-body: #1d1d24;
   --mark-screen: #3a3a45;
@@ -47,6 +49,8 @@
     --accent-text: #ff7eaa;
     --ok: #52d6c4;
     --ok-soft: rgb(82 214 196 / 0.1);
+    --warn: #f0b860;
+    --warn-soft: rgb(240 184 96 / 0.12);
 
     --mark-body: #2d2e37;
     --mark-screen: #121317;
@@ -247,6 +251,29 @@ code {
 }
 
 .badge-ok { background: var(--ok-soft); color: var(--ok); }
+.badge-warn { background: var(--warn-soft); color: var(--warn); }
+
+.button {
+  height: 36px;
+  padding: 0 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: 600 13.5px/1 var(--font);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.button:hover { background: var(--surface-2); }
+
+.button-primary {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--surface);
+}
+
+.button-primary:hover { background: color-mix(in srgb, var(--text) 85%, var(--surface)); }
 
 .section-head {
   display: flex;
@@ -404,8 +431,9 @@ code {
   display: grid;
   place-items: center;
   flex: none;
-  width: 30px;
+  min-width: 30px;
   height: 30px;
+  padding: 0 6px;
   border-radius: 9px;
   background: var(--surface-2);
   color: var(--text-muted);
@@ -425,6 +453,48 @@ code {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A provider's sign-in */
+
+.account {
+  display: grid;
+  justify-items: start;
+  gap: 14px;
+  padding: 22px 28px;
+  font-size: 14px;
+}
+
+.account p { max-width: 62ch; }
+.account .for { margin-top: 0; }
+
+.account a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.code {
+  display: inline-block;
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.problem {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 /* This server */
@@ -465,6 +535,8 @@ code {
   .guide { padding: 22px 18px 0; }
   .guide-head { padding-bottom: 20px; }
   .server { padding: 18px 18px 0; }
+  .account { padding: 18px; }
+  .code { font-size: 22px; }
   .server .guide-note { margin-top: 18px; }
 
   /* Labels go above their values, which need the width. */

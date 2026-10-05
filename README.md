@@ -25,12 +25,15 @@ No tuner hardware is needed.
 
 - **TVP channels.** TVP 1, TVP 2, TVP Info, TVP Sport, TVP Kultura,
   the regional TVP3 stations and more.
-- **A 48-hour TV guide.** Programme listings come straight from TVP.
+- **Globoplay's free channels.** TV Globo, Futura and ge tv, with a
+  [Globo account](docs/usage.md#globoplay).
+- **A 48-hour TV guide.** Programme listings come straight from the providers.
 - **Original stream quality.** Up to 1080p, without transcoding in telesfor.
 
 > [!NOTE]
-> Most TVP channels need a Polish connection. From abroad, use an HTTP proxy
-> with a Polish exit. Paid and DRM-protected channels are not supported.
+> Most TVP channels need a Polish connection, and Globoplay needs a Brazilian
+> one. From abroad, use an HTTP proxy with an exit in that country. Paid and
+> DRM-protected channels are not supported.
 
 ## Quick start
 
@@ -66,20 +69,30 @@ watch TV or record programmes.
 Use the IP address or hostname of the machine running telesfor wherever you
 see `<telesfor-host>`. It must be reachable from Plex Media Server.
 telesfor's [settings page](docs/usage.md#web-interface) at
-`http://<telesfor-host>:5004/` lists both addresses, ready to copy.
+`http://<telesfor-host>:5004/` lists the addresses, ready to copy.
+
+Each provider is a tuner of its own, with its own guide.
+
+| Provider | Tuner | XMLTV guide |
+|---|---|---|
+| TVP | `http://<telesfor-host>:5004` | `http://<telesfor-host>:5004/xmltv.xml` |
+| Globoplay | `http://<telesfor-host>:5004/globo` | `http://<telesfor-host>:5004/globo/xmltv.xml` |
 
 1. In Plex, open **Settings → Live TV & DVR** and set up a new DVR.
-2. Add the tuner manually as `http://<telesfor-host>:5004`.
+2. Add a provider's tuner manually by its address.
    Plex does not discover telesfor automatically.
-3. Once the channels appear, choose an **XMLTV** guide and enter
-   `http://<telesfor-host>:5004/xmltv.xml`.
+3. Once the channels appear, choose an **XMLTV** guide and enter that
+   provider's guide address.
 4. Check the channel mapping and finish setup.
+5. For the other provider, add its tuner to the same DVR as another device,
+   with its own guide address.
 
-Your channels and guide are now available in Plex's **Live TV** section.
+Your channels and guide are now available in Plex's **Live TV** section, in
+one list. Globoplay's channels are numbered from 1001, so they follow TVP's.
 
 ## Documentation
 
-- [Configuration](docs/usage.md#configuration): change the port, proxy or logging.
+- [Configuration](docs/usage.md#configuration): change the port, proxies or logging.
 - [Troubleshooting](docs/usage.md#troubleshooting): help with setup, channels and the guide.
 - [Development](docs/development.md): how streaming works, tests and adding a provider.
 

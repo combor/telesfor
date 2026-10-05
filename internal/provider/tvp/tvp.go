@@ -51,21 +51,13 @@ type Provider struct {
 //
 // TVP blocks most of its channels outside Poland and binds every stream to the
 // address that asked for it. So when proxy is set, all traffic goes through it:
-// the API calls made here and, later, the stream itself. Without one, the
-// proxy settings of the environment apply.
+// the API calls made here and, later, the stream itself.
 func New(proxy string) (*Provider, error) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if proxy != "" {
-		proxyURL, err := url.Parse(proxy)
-		if err != nil || proxyURL.Host == "" {
-			return nil, fmt.Errorf("tvp: invalid proxy %q: want a URL like http://host:port", proxy)
-		}
-		transport.Proxy = http.ProxyURL(proxyURL)
+	client, err := provider.Client(proxy)
+	if err != nil {
+		return nil, fmt.Errorf("tvp: %w", err)
 	}
-	return &Provider{
-		api:    apiURL,
-		client: &http.Client{Transport: transport, Timeout: time.Minute},
-	}, nil
+	return &Provider{api: apiURL, client: client}, nil
 }
 
 // Name implements provider.Provider.

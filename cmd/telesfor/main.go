@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/ebc"
 	"github.com/combor/telesfor/internal/provider/globo"
 	"github.com/combor/telesfor/internal/provider/tvp"
 	"github.com/combor/telesfor/internal/remux"
@@ -34,6 +35,8 @@ func main() {
 		"HTTP proxy for TVP, which blocks most channels outside Poland (env TELESFOR_TVP_PROXY)")
 	globoProxy := flag.String("globo-proxy", os.Getenv("TELESFOR_GLOBO_PROXY"),
 		"HTTP proxy for Globoplay, which blocks its channels outside Brazil (env TELESFOR_GLOBO_PROXY)")
+	ebcProxy := flag.String("ebc-proxy", os.Getenv("TELESFOR_EBC_PROXY"),
+		"HTTP proxy for EBC, should it block its channels outside Brazil (env TELESFOR_EBC_PROXY)")
 	data := flag.String("data", dataDir(),
 		"directory to keep sign-ins in (env TELESFOR_DATA)")
 	debug := flag.Bool("debug", os.Getenv("TELESFOR_DEBUG") != "",
@@ -57,13 +60,13 @@ func main() {
 	if *debug {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
-	if err := run(*listen, *tvpProxy, *globoProxy, *data, *debug); err != nil {
+	if err := run(*listen, *tvpProxy, *globoProxy, *ebcProxy, *data, *debug); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(listen, tvpProxy, globoProxy, data string, debug bool) error {
+func run(listen, tvpProxy, globoProxy, ebcProxy, data string, debug bool) error {
 	if data == "" {
 		return errors.New("no home directory to keep sign-ins in: set -data")
 	}
@@ -81,6 +84,10 @@ func run(listen, tvpProxy, globoProxy, data string, debug bool) error {
 	if err != nil {
 		return err
 	}
+	ebcProvider, err := ebc.New(ebcProxy)
+	if err != nil {
+		return err
+	}
 
 	// Every TV source plugs in here, with a tuner of its own and the settings
 	// it was started with, for its tab of the settings page. TVP's tuner is at
@@ -94,6 +101,8 @@ func run(listen, tvpProxy, globoProxy, data string, debug bool) error {
 			[]web.Setting{proxySetting(tvpProxy, "-tvp-proxy", "TELESFOR_TVP_PROXY")}},
 		{globoProvider, tuner.Device{ID: "7E1E5F05", Name: "Globoplay", Path: "/globo", First: 1001},
 			[]web.Setting{proxySetting(globoProxy, "-globo-proxy", "TELESFOR_GLOBO_PROXY")}},
+		{ebcProvider, tuner.Device{ID: "7E1E5F06", Name: "EBC", Path: "/ebc", First: 2001},
+			[]web.Setting{proxySetting(ebcProxy, "-ebc-proxy", "TELESFOR_EBC_PROXY")}},
 	}
 
 	remuxer, err := remux.New()

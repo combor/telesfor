@@ -14,6 +14,7 @@ Use command-line flags or environment variables. Flags take precedence.
 | `-listen` | `TELESFOR_LISTEN` | `:5004` | Address and port to listen on. |
 | `-tvp-proxy` | `TELESFOR_TVP_PROXY` | Unset | HTTP proxy for TVP's channel list, guide and streams. |
 | `-globo-proxy` | `TELESFOR_GLOBO_PROXY` | Unset | HTTP proxy for Globoplay's sign-in, guide and streams. |
+| `-ebc-proxy` | `TELESFOR_EBC_PROXY` | Unset | HTTP proxy for EBC's guide and streams. |
 | `-data` | `TELESFOR_DATA` | `telesfor` in your user configuration directory | Directory that keeps the sign-ins to providers. |
 | `-debug` | `TELESFOR_DEBUG` | Off | Log requests, upstream fetches and ffmpeg warnings. |
 | `-version` | | | Print the version and exit. |
@@ -60,6 +61,18 @@ page says so, and you sign in again there.
 Globoplay plays only in Brazil. From abroad, set `-globo-proxy` to an HTTP
 proxy that exits in Brazil. TV Globo is the regional station of the place the
 proxy exits in. If Globo still blocks the streams, try another exit.
+
+### EBC
+
+TV Brasil, TV Brasil Internacional, Canal Gov and Canal Educação need no
+account, and play outside Brazil. EBC keeps some of its pages to Brazil. If
+it does the same to the streams, set `-ebc-proxy` to an HTTP proxy that exits
+there.
+
+Only TV Brasil has a guide, and it is the guide of its broadcast: EBC leaves
+out of the web stream what it has no rights to show online. Where EBC lists
+no programme, or leaves one unnamed, the guide has the channel's name in its
+place, an hour at a time, so that Plex can still play and record the channel.
 
 ## Build from source
 
@@ -138,13 +151,14 @@ account, and leaves out a proxy's user name and password.
 | Plex cannot find the tuner | Add it manually. From the Plex server, check that `http://<telesfor-host>:5004/discover.json` is reachable. |
 | Some channels will not play | Check the log for the reason. A region block needs a connection in the provider's country; DRM-protected channels are not supported. |
 | Globoplay has no channels | Sign in on the settings page. See [Globoplay](#globoplay). |
+| An EBC channel is unavailable | EBC is not streaming it at the moment. A proxy or an account will not bring it back. |
 | Plex shows a playback error after its DVR was set up again | Quit and reopen the Plex app. |
 | The guide is missing | Check that `http://<telesfor-host>:5004/xmltv.xml` is reachable from Plex and selected as its XMLTV guide. |
 | Playback stops when the terminal closes | Keep telesfor running for both viewing and scheduled recordings. |
 
 Use `/discover.json` to check the tuner, `/lineup.json` to see the channels,
-or `/xmltv.xml` for the guide. Globoplay's are under `/globo`. If you changed
-the port, update these addresses too.
+or `/xmltv.xml` for the guide. Globoplay's are under `/globo` and EBC's
+under `/ebc`. If you changed the port, update these addresses too.
 
 ### Reading the log
 

@@ -27,6 +27,8 @@ No tuner hardware is needed.
   the regional TVP3 stations and more.
 - **Globoplay's free channels.** TV Globo, Futura and ge tv, with a
   [Globo account](docs/usage.md#globoplay).
+- **EBC's channels.** TV Brasil, TV Brasil Internacional, Canal Gov and
+  Canal Educação, [without an account](docs/usage.md#ebc).
 - **A 48-hour TV guide.** Programme listings come straight from the providers.
 - **Original stream quality.** Up to 1080p, without transcoding in telesfor.
 
@@ -77,6 +79,7 @@ Each provider is a tuner of its own, with its own guide.
 |---|---|---|
 | TVP | `http://<telesfor-host>:5004` | `http://<telesfor-host>:5004/xmltv.xml` |
 | Globoplay | `http://<telesfor-host>:5004/globo` | `http://<telesfor-host>:5004/globo/xmltv.xml` |
+| EBC | `http://<telesfor-host>:5004/ebc` | `http://<telesfor-host>:5004/ebc/xmltv.xml` |
 
 1. In Plex, open **Settings → Live TV & DVR** and set up a new DVR.
 2. Add a provider's tuner manually by its address.
@@ -84,11 +87,12 @@ Each provider is a tuner of its own, with its own guide.
 3. Once the channels appear, choose an **XMLTV** guide and enter that
    provider's guide address.
 4. Check the channel mapping and finish setup.
-5. For the other provider, add its tuner to the same DVR as another device,
+5. For each other provider, add its tuner to the same DVR as another device,
    with its own guide address.
 
 Your channels and guide are now available in Plex's **Live TV** section, in
-one list. Globoplay's channels are numbered from 1001, so they follow TVP's.
+one list. Globoplay's channels are numbered from 1001 and EBC's from 2001,
+so they follow TVP's.
 
 ## Documentation
 

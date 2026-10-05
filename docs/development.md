@@ -28,6 +28,7 @@ flowchart LR
 | `internal/provider` | The contract every TV source implements. |
 | `internal/provider/tvp` | TVP channels, guide and stream URLs. |
 | `internal/provider/globo` | Globoplay's sign-in, channels, guide and stream URLs. |
+| `internal/provider/ebc` | EBC's channels and streams, and TV Brasil's guide. |
 | `internal/store` | The bbolt database that keeps sign-ins across restarts. |
 | `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy and startup alignment. |
 | `internal/tuner` | HDHomeRun emulation, streaming endpoints and the XMLTV guide. |
@@ -114,11 +115,11 @@ go test -race ./...
 CI runs vet and tests with the race detector on every push, checks Go
 formatting and scans for known vulnerabilities.
 
-The tests use recorded responses. To check the provider against TVP's real
-API, which CI does daily:
+The tests use recorded responses. To check the providers against TVP's real
+API and EBC's real site and streams, which CI does daily:
 
 ```sh
-TELESFOR_LIVE=1 go test -count=1 -v -run TestLive ./internal/provider/tvp
+TELESFOR_LIVE=1 go test -count=1 -v -run TestLive ./internal/provider/tvp ./internal/provider/ebc
 ```
 
 Globoplay's needs a telesfor that has signed in, stopped for the test, and a

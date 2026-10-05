@@ -87,12 +87,20 @@ type Provider interface {
 ```
 
 Then give it a tuner in `cmd/telesfor/main.go`: a device ID, a path and a
-range of channel numbers of its own. Each stream returns a `Source` with its
-URL and the HTTP client used to fetch it.
+range of channel numbers of its own, and the settings it is started with,
+such as its proxy. Each stream returns a `Source` with its URL and the HTTP
+client used to fetch it.
 
-A provider that streams to an account also implements `provider.Account`.
-The settings page then offers its sign-in, by a code the user enters on the
-provider's own site.
+The tuner comes with a tab on the settings page, which shows those settings.
+A provider adds to its tab by implementing more:
+
+| Interface | Adds |
+|---|---|
+| `provider.Account` | A sign-in, by a code the user enters on the provider's own site. |
+| `provider.Settings` | Settings of its own: HTML the provider writes, and the forms posted from it. |
+
+The page allows no inline styles or scripts, so that HTML uses the classes of
+`internal/web/static/style.css`.
 
 ## Tests
 

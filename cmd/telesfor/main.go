@@ -82,14 +82,18 @@ func run(listen, tvpProxy, globoProxy, data string, debug bool) error {
 		return err
 	}
 
-	// Every TV source plugs in here, with a tuner of its own. TVP's is at the
-	// root, where Plex has known it since it was the only one.
+	// Every TV source plugs in here, with a tuner of its own and the settings
+	// it was started with, for its tab of the settings page. TVP's tuner is at
+	// the root, where Plex has known it since it was the only one.
 	sources := []struct {
 		provider.Provider
 		tuner.Device
+		settings []web.Setting
 	}{
-		{tvpProvider, tuner.Device{ID: "7E1E5F04", Name: "TVP", First: 1}},
-		{globoProvider, tuner.Device{ID: "7E1E5F05", Name: "Globoplay", Path: "/globo", First: 1001}},
+		{tvpProvider, tuner.Device{ID: "7E1E5F04", Name: "TVP", First: 1},
+			[]web.Setting{proxySetting(tvpProxy, "-tvp-proxy", "TELESFOR_TVP_PROXY")}},
+		{globoProvider, tuner.Device{ID: "7E1E5F05", Name: "Globoplay", Path: "/globo", First: 1001},
+			[]web.Setting{proxySetting(globoProxy, "-globo-proxy", "TELESFOR_GLOBO_PROXY")}},
 	}
 
 	remuxer, err := remux.New()
@@ -97,7 +101,7 @@ func run(listen, tvpProxy, globoProxy, data string, debug bool) error {
 		return err
 	}
 	mux := http.NewServeMux()
-	var tuners []*tuner.Tuner
+	ui := &web.Handler{Settings: settings(listen, data, debug), Version: version}
 	channels := 0
 	for _, source := range sources {
 		t, err := tuner.New(context.Background(), source.Provider, remuxer, source.Device)
@@ -105,10 +109,10 @@ func run(listen, tvpProxy, globoProxy, data string, debug bool) error {
 			return err
 		}
 		t.Register(mux)
-		tuners = append(tuners, t)
+		ui.Providers = append(ui.Providers, web.Provider{Tuner: t, Settings: source.settings})
 		channels += len(t.Lineup())
 	}
-	(&web.Handler{Tuners: tuners, Settings: settings(listen, tvpProxy, globoProxy, data, debug), Version: version}).Register(mux)
+	ui.Register(mux)
 
 	slog.Info("telesfor is on the air", "version", version, "listen", listen, "channels", channels)
 	return http.ListenAndServe(listen, mux)
@@ -127,23 +131,22 @@ func dataDir() string {
 	return filepath.Join(dir, "telesfor")
 }
 
-// settings is how telesfor was started, for the settings page.
-func settings(listen, tvpProxy, globoProxy, data string, debug bool) []web.Setting {
+// settings is how telesfor itself was started, for the settings page.
+func settings(listen, data string, debug bool) []web.Setting {
 	logging := "Off"
 	if debug {
 		logging = "On"
 	}
 	return []web.Setting{
 		{Name: "Listen address", Value: listen, Flag: "-listen", Env: "TELESFOR_LISTEN"},
-		proxySetting("TVP proxy", tvpProxy, "-tvp-proxy", "TELESFOR_TVP_PROXY"),
-		proxySetting("Globoplay proxy", globoProxy, "-globo-proxy", "TELESFOR_GLOBO_PROXY"),
 		{Name: "Data directory", Value: data, Flag: "-data", Env: "TELESFOR_DATA"},
 		{Name: "Debug logging", State: logging, Flag: "-debug", Env: "TELESFOR_DEBUG"},
 	}
 }
 
-func proxySetting(name, proxy, flag, env string) web.Setting {
-	setting := web.Setting{Name: name, State: "Not set", Flag: flag, Env: env}
+// proxySetting is a provider's proxy, for its tab of the settings page.
+func proxySetting(proxy, flag, env string) web.Setting {
+	setting := web.Setting{Name: "Proxy", State: "Not set", Flag: flag, Env: env}
 	if u, err := url.Parse(proxy); err == nil && u.Host != "" {
 		u.User = nil // the page is open to whoever can reach the tuner
 		setting.Value, setting.State = u.String(), ""

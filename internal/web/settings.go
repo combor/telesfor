@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -20,24 +22,106 @@ type Setting struct {
 	Env   string // the environment variable
 }
 
-// settingsView is everything the settings page shows: the providers, and how
-// telesfor was started.
-type settingsView struct {
-	Version   string
-	Providers []providerView
-	Streams   int // open now, over all channels
-	Settings  []Setting
+const serverPath = "/ui/server"
+
+// tabPath is where a provider's tab is.
+func tabPath(p provider.Provider) string { return "/ui/providers/" + p.Name() }
+
+// frame is what every tab has around its own part: the header, and the tabs.
+type frame struct {
+	Version string
+	Tabs    []tab
 }
 
-// providerView is a provider on the settings page: what to enter in Plex for
-// it, its sign-in, and its channels with what is on air.
+// tab leads to a provider's part of the page, or to the server's.
+type tab struct {
+	Name    string
+	Path    string
+	Current bool
+	Count   string // the provider's channels; the server's tab has none
+	Streams int    // open now, over those channels
+	Problem string // what the provider needs seen to, such as a sign-in to renew
+}
+
+func (f frame) current() tab {
+	for _, t := range f.Tabs {
+		if t.Current {
+			return t
+		}
+	}
+	return tab{}
+}
+
+func (f frame) Title() string { return f.current().Name + " — telesfor" }
+
+// Path is the URL the page refreshes from.
+func (f frame) Path() string { return f.current().Path }
+
+// Streams is how many are open now, over all providers.
+func (f frame) Streams() int {
+	streams := 0
+	for _, t := range f.Tabs {
+		streams += t.Streams
+	}
+	return streams
+}
+
+// State names what the tuners are doing for the header.
+func (f frame) State() string {
+	if f.Streams() > 0 {
+		return "on-air"
+	}
+	return "idle"
+}
+
+func (f frame) StateLabel() string {
+	if f.Streams() > 0 {
+		return "On air"
+	}
+	return "Idle"
+}
+
+// frame lists the tabs, with the one at path as the current.
+func (h *Handler) frame(path string) frame {
+	f := frame{Version: displayVersion(h.Version)}
+	for _, p := range h.Providers {
+		lineup := p.Tuner.Lineup()
+		t := tab{Name: p.Tuner.Name(), Path: tabPath(p.Tuner.Provider()), Count: strconv.Itoa(len(lineup))}
+		for _, ch := range lineup {
+			t.Streams += ch.Streams
+		}
+		if account, ok := p.Tuner.Provider().(provider.Account); ok {
+			if login := (accountView{account.Login()}); login.Expired() {
+				t.Problem = login.Label()
+			}
+		}
+		f.Tabs = append(f.Tabs, t)
+	}
+	f.Tabs = append(f.Tabs, tab{Name: "Server", Path: serverPath})
+	for i := range f.Tabs {
+		f.Tabs[i].Current = f.Tabs[i].Path == path
+	}
+	return f
+}
+
+// providerView is a provider's tab: what to enter in Plex for it, its sign-in,
+// its settings, and its channels with what is on air.
 type providerView struct {
-	ID       string // the provider's name in URLs
+	frame
 	Name     string
-	Tuner    string // the address Plex adds the tuner by
-	Guide    string // the XMLTV guide's address
+	Tuner    string        // the address Plex adds the tuner by
+	Guide    string        // the XMLTV guide's address
+	Account  *accountView  // nil if the provider needs no account
+	Own      template.HTML // the settings the provider brings itself, if any
+	Problem  string        // in place of Own, when it can't be shown
+	Settings []Setting     // of the provider, as telesfor was started with
 	Channels []tuner.Station
-	Account  *accountView // nil if the provider needs no account
+}
+
+// serverView is the server's tab: how telesfor was started.
+type serverView struct {
+	frame
+	Settings []Setting
 }
 
 // accountView is where signing in to a provider stands.
@@ -72,76 +156,62 @@ func (a accountView) Left() string {
 	return "minute"
 }
 
-func newSettingsView(providers []providerView, settings []Setting, version string) settingsView {
-	v := settingsView{Version: displayVersion(version), Providers: providers, Settings: settings}
-	for _, p := range providers {
-		for _, ch := range p.Channels {
-			v.Streams += ch.Streams
+// find looks up the provider a request names. The page's own address is the
+// first provider's tab.
+func (h *Handler) find(r *http.Request) (Provider, bool) {
+	name := r.PathValue("provider")
+	for _, p := range h.Providers {
+		if name == "" || p.Tuner.Provider().Name() == name {
+			return p, true
 		}
 	}
-	return v
+	return Provider{}, false
 }
 
-func (v settingsView) Title() string { return "Settings — telesfor" }
-
-// Path is the URL the page refreshes from.
-func (v settingsView) Path() string { return "/ui/settings" }
-
-// State names what the tuners are doing for the header.
-func (v settingsView) State() string {
-	if v.Streams > 0 {
-		return "on-air"
+// providerTab shows a provider's tab. The addresses are the ones the page was
+// asked for at.
+func (h *Handler) providerTab(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.find(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
 	}
-	return "idle"
-}
-
-func (v settingsView) StateLabel() string {
-	if v.Streams > 0 {
-		return "On air"
+	t := p.Tuner
+	view := providerView{
+		frame:    h.frame(tabPath(t.Provider())),
+		Name:     t.Name(),
+		Tuner:    t.URL(r),
+		Guide:    t.URL(r) + "/xmltv.xml",
+		Settings: p.Settings,
+		Channels: t.Lineup(),
 	}
-	return "Idle"
-}
-
-// providers describes each tuner's provider. The addresses are the ones the
-// page was asked for at.
-func (h *Handler) providers(r *http.Request) []providerView {
-	views := make([]providerView, len(h.Tuners))
-	for i, t := range h.Tuners {
-		views[i] = providerView{
-			ID:       t.Provider().Name(),
-			Name:     t.Name(),
-			Tuner:    t.URL(r),
-			Guide:    t.URL(r) + "/xmltv.xml",
-			Channels: t.Lineup(),
-		}
-		if account, ok := t.Provider().(provider.Account); ok {
-			views[i].Account = &accountView{account.Login()}
+	if account, ok := t.Provider().(provider.Account); ok {
+		view.Account = &accountView{account.Login()}
+	}
+	if own, ok := t.Provider().(provider.Settings); ok {
+		var err error
+		if view.Own, err = own.SettingsHTML(view.Path() + "/settings"); err != nil {
+			slog.Error("rendering a provider's settings", "provider", own.Name(), "err", err)
+			view.Own, view.Problem = "", t.Name()+"’s own settings can’t be shown. telesfor’s log has the reason."
 		}
 	}
-	return views
+	render(w, r, providerPage, view)
 }
 
-// settings shows the page. htmx requests get only the refreshing part.
-func (h *Handler) settings(w http.ResponseWriter, r *http.Request) {
-	name := "layout"
-	if htmx(r) {
-		name = "update"
-	}
-	w.Header().Add("Vary", "HX-Request")
-	render(w, settingsPage, name, newSettingsView(h.providers(r), h.Settings, h.Version))
+func (h *Handler) serverTab(w http.ResponseWriter, r *http.Request) {
+	render(w, r, serverPage, serverView{h.frame(serverPath), h.Settings})
 }
 
 // account finds the provider a request names, if it is one with an account.
 func (h *Handler) account(r *http.Request) (provider.Account, bool) {
-	for _, t := range h.Tuners {
-		if account, ok := t.Provider().(provider.Account); ok && account.Name() == r.PathValue("provider") {
-			return account, true
-		}
+	if p, ok := h.find(r); ok {
+		account, ok := p.Tuner.Provider().(provider.Account)
+		return account, ok
 	}
 	return nil, false
 }
 
-// signIn starts a sign-in. The page shows how it goes, and what went wrong.
+// signIn starts a sign-in. The tab shows how it goes, and what went wrong.
 func (h *Handler) signIn(w http.ResponseWriter, r *http.Request) {
 	account, ok := h.account(r)
 	if !ok {
@@ -151,7 +221,7 @@ func (h *Handler) signIn(w http.ResponseWriter, r *http.Request) {
 	if err := account.SignIn(r.Context()); err != nil {
 		slog.Error("sign-in failed", "err", err)
 	}
-	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+	http.Redirect(w, r, tabPath(account), http.StatusSeeOther)
 }
 
 func (h *Handler) signOut(w http.ResponseWriter, r *http.Request) {
@@ -163,5 +233,31 @@ func (h *Handler) signOut(w http.ResponseWriter, r *http.Request) {
 	if err := account.SignOut(); err != nil {
 		slog.Error("sign-out failed", "err", err)
 	}
-	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+	http.Redirect(w, r, tabPath(account), http.StatusSeeOther)
+}
+
+// configure hands a provider what a form of its own settings sent, then asks
+// for its channels again. The tab shows what came of it.
+func (h *Handler) configure(w http.ResponseWriter, r *http.Request) {
+	var own provider.Settings
+	p, ok := h.find(r)
+	if ok {
+		own, ok = p.Tuner.Provider().(provider.Settings)
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "can't read the form", http.StatusBadRequest)
+		return
+	}
+	// The settings are taken whole, even if the user leaves meanwhile.
+	ctx := context.WithoutCancel(r.Context())
+	if err := own.Configure(ctx, r.PostForm); err != nil {
+		slog.Error("changing a provider's settings", "provider", own.Name(), "err", err)
+	} else if err := p.Tuner.Scan(ctx); err != nil {
+		slog.Error("scan failed", "provider", own.Name(), "err", err)
+	}
+	http.Redirect(w, r, tabPath(own), http.StatusSeeOther)
 }

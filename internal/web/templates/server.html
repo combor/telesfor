@@ -1,0 +1,17 @@
+{{define "page" -}}
+  <section aria-labelledby="server-title">
+    <div class="section-head">
+      <h2 id="server-title">This server</h2>
+    </div>
+    <div class="card startup">
+      <dl class="values">
+        {{- with .Version}}
+        <dt>Version</dt>
+        <dd>{{.}}</dd>
+        {{- end}}
+        {{- template "started" .Settings}}
+      </dl>
+      {{template "restart"}}
+    </div>
+  </section>
+{{- end}}

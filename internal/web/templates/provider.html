@@ -1,0 +1,93 @@
+{{define "page" -}}
+  <section class="card guide" aria-labelledby="plex-title">
+    <header class="guide-head">
+      <h2 id="plex-title">Connect Plex</h2>
+      <p class="lead">{{.Name}} is a tuner with a guide of its own. Set your first provider up in Plex as a DVR, then add the others to that DVR as further devices.</p>
+    </header>
+    <dl class="values">
+      <dt>Tuner</dt>
+      <dd><code class="value">{{.Tuner}}</code></dd>
+      <dt>XMLTV guide</dt>
+      <dd><code class="value">{{.Guide}}</code></dd>
+    </dl>
+    <p class="guide-note">In Plex, go to Settings → Live TV &amp; DVR → Set Up Plex DVR. Plex doesn’t find telesfor by itself: enter the tuner’s address by hand, then choose an XMLTV guide once the channels appear. The addresses are the ones this page was opened with. If Plex reaches telesfor another way, such as by a Docker service name, use that host instead.</p>
+  </section>
+
+  {{- with .Account}}
+  <section aria-labelledby="account-title">
+    <div class="section-head">
+      <h2 id="account-title">Account</h2>
+      <span class="badge{{if .SignedIn}} badge-ok{{else if .Expired}} badge-warn{{end}}">{{.Label}}</span>
+    </div>
+    <div class="card account">
+      {{- if .Pending}}
+      <p>Open <a href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Site}}</a>, sign in to your account there, and enter this code:</p>
+      <p><code class="value code">{{.Code}}</code></p>
+      <p class="for">telesfor is waiting for {{$.Name}} to confirm. The code works for another {{.Left}}.</p>
+      <form method="post" action="{{$.Path}}/sign-out"><button class="button">Cancel</button></form>
+      {{- else if .SignedIn}}
+      <p>telesfor is signed in to {{$.Name}}. Signing out takes its channels off the tuner.</p>
+      <form method="post" action="{{$.Path}}/sign-out"><button class="button">Sign out</button></form>
+      {{- else if .Expired}}
+      <p>{{$.Name}} no longer accepts the sign-in. Sign in again to keep its channels playing.</p>
+      <div class="actions">
+        <form method="post" action="{{$.Path}}/sign-in"><button class="button button-primary">Sign in again</button></form>
+        <form method="post" action="{{$.Path}}/sign-out"><button class="button">Sign out</button></form>
+      </div>
+      {{- else}}
+      <p>Sign in to get {{$.Name}}’s channels. telesfor shows a code to enter on {{$.Name}}’s own site, so it never sees your password.</p>
+      <form method="post" action="{{$.Path}}/sign-in"><button class="button button-primary">Sign in</button></form>
+      {{- end}}
+      {{- with .Problem}}
+      <p class="problem" role="status">{{.}}</p>
+      {{- end}}
+    </div>
+  </section>
+  {{- end}}
+
+  {{- /* The settings the provider brings itself. */}}
+  {{- with .Own}}
+  {{.}}
+  {{- end}}
+  {{- with .Problem}}
+  <p class="problem" role="status">{{.}}</p>
+  {{- end}}
+
+  {{- if .Settings}}
+  <section aria-labelledby="startup-title">
+    <div class="section-head">
+      <h2 id="startup-title">Startup settings</h2>
+    </div>
+    <div class="card startup">
+      <dl class="values">
+        {{- template "started" .Settings}}
+      </dl>
+      {{template "restart"}}
+    </div>
+  </section>
+  {{- end}}
+
+  <section aria-labelledby="channels-title">
+    <div class="section-head">
+      <h2 id="channels-title">Channels</h2>
+      <span class="count">{{len .Channels}}</span>
+    </div>
+    {{- if .Channels}}
+    <ul class="channels">
+      {{- range .Channels}}
+      <li class="channel{{if .Streams}} channel-on-air{{end}}">
+        <span class="pos{{if .Streams}} pos-ok{{end}}">{{.Number}}</span>
+        <span class="channel-name" title="{{.Name}}">{{.Name}}</span>
+        {{- if .Streams}}
+        <span class="badge badge-ok">On air{{if gt .Streams 1}} ×{{.Streams}}{{end}}</span>
+        {{- end}}
+      </li>
+      {{- end}}
+    </ul>
+    {{- else if .Account}}
+    <p class="hint">{{.Name}} has channels for an account. Sign in above to get them.</p>
+    {{- else}}
+    <p class="hint">{{.Name}} offered no channels. telesfor asks when it starts.</p>
+    {{- end}}
+  </section>
+{{- end}}

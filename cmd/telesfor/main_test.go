@@ -52,19 +52,25 @@ func TestCheckHealth(t *testing.T) {
 }
 
 func TestSettings(t *testing.T) {
-	got := settings(":5004", "http://user:secret@proxy.example:8888", "", "/var/lib/telesfor", true)
+	got := settings(":5004", "/var/lib/telesfor", true)
 	want := []web.Setting{
 		{Name: "Listen address", Value: ":5004", Flag: "-listen", Env: "TELESFOR_LISTEN"},
-		// Without the login: the settings page is open to the network.
-		{Name: "TVP proxy", Value: "http://proxy.example:8888", Flag: "-tvp-proxy", Env: "TELESFOR_TVP_PROXY"},
-		{Name: "Globoplay proxy", State: "Not set", Flag: "-globo-proxy", Env: "TELESFOR_GLOBO_PROXY"},
 		{Name: "Data directory", Value: "/var/lib/telesfor", Flag: "-data", Env: "TELESFOR_DATA"},
 		{Name: "Debug logging", State: "On", Flag: "-debug", Env: "TELESFOR_DEBUG"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("settings = %+v, want %+v", got, want)
 	}
-	if got := settings(":5004", "", "", "", false); got[1].State != "Not set" || got[4].State != "Off" {
-		t.Errorf("settings without a proxy or debug logging = %+v", got)
+	if got := settings(":5004", "", false); got[2].State != "Off" {
+		t.Errorf("settings without debug logging = %+v", got)
+	}
+
+	// Without the login: the settings page is open to the network.
+	proxy := web.Setting{Name: "Proxy", Value: "http://proxy.example:8888", Flag: "-tvp-proxy", Env: "TELESFOR_TVP_PROXY"}
+	if got := proxySetting("http://user:secret@proxy.example:8888", "-tvp-proxy", "TELESFOR_TVP_PROXY"); got != proxy {
+		t.Errorf("proxy setting = %+v, want %+v", got, proxy)
+	}
+	if got := proxySetting("", "-tvp-proxy", "TELESFOR_TVP_PROXY"); got.Value != "" || got.State != "Not set" {
+		t.Errorf("setting without a proxy = %+v", got)
 	}
 }

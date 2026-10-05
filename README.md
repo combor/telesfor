@@ -69,7 +69,7 @@ watch TV or record programmes.
 Use the IP address or hostname of the machine running telesfor wherever you
 see `<telesfor-host>`. It must be reachable from Plex Media Server.
 telesfor's [settings page](docs/usage.md#web-interface) at
-`http://<telesfor-host>:5004/` lists the addresses, ready to copy.
+`http://<telesfor-host>:5004/` has each provider's addresses, ready to copy.
 
 Each provider is a tuner of its own, with its own guide.
 

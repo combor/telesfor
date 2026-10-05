@@ -13,6 +13,7 @@
   --bg: #f6f6f8;
   --surface: #ffffff;
   --surface-2: #f1f1f4;
+  --raised: #ffffff;
   --border: #e6e6eb;
   --border-strong: #d3d3db;
   --text: #16161b;
@@ -41,6 +42,7 @@
     --bg: #0e0f12;
     --surface: #16171b;
     --surface-2: #1f2026;
+    --raised: #33343d;
     --border: #26272e;
     --border-strong: #34353e;
     --text: #ececf1;
@@ -230,6 +232,54 @@ code {
   letter-spacing: -0.025em;
 }
 
+/* Tabs: one for each provider, and one for the server */
+
+.tabs {
+  display: flex;
+  justify-self: start;
+  gap: 2px;
+  max-width: 100%;
+  padding: 4px;
+  overflow-x: auto;
+  border-radius: 999px;
+  background: var(--surface-2);
+  scrollbar-width: none;
+}
+
+.tab {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 15px;
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.2s;
+}
+
+.tab:hover { color: var(--text); }
+
+.tab[aria-current="page"] {
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.tab-count {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.tab-count-ok { color: var(--ok); }
+.tab-count-warn { color: var(--warn); }
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -330,24 +380,9 @@ code {
 
 .guide-head .lead { max-width: 62ch; }
 
-.fieldset {
-  display: grid;
-  grid-template-columns: minmax(0, 5fr) minmax(0, 8fr);
-  gap: 12px 40px;
+.guide .values {
   padding: 24px 0;
   border-top: 1px solid var(--border);
-}
-
-.fieldset-about h3 {
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
-.fieldset-about p {
-  margin-top: 4px;
-  color: var(--text-muted);
-  font-size: 13.5px;
 }
 
 /* One label width, so the lists of a page line up. */
@@ -497,10 +532,10 @@ code {
   color: var(--warn);
 }
 
-/* This server */
+/* Settings telesfor was started with */
 
-.server { padding: 22px 28px 0; }
-.server .guide-note { margin-top: 22px; }
+.startup { padding: 22px 28px 0; }
+.startup .guide-note { margin-top: 22px; }
 
 /* Motion */
 
@@ -534,10 +569,11 @@ code {
 
   .guide { padding: 22px 18px 0; }
   .guide-head { padding-bottom: 20px; }
-  .server { padding: 18px 18px 0; }
+  .guide .values { padding: 20px 0; }
+  .startup { padding: 18px 18px 0; }
   .account { padding: 18px; }
   .code { font-size: 22px; }
-  .server .guide-note { margin-top: 18px; }
+  .startup .guide-note { margin-top: 18px; }
 
   /* Labels go above their values, which need the width. */
   .values {
@@ -547,9 +583,4 @@ code {
 
   .values dt { font-size: 12.5px; }
   .values dd + dt { margin-top: 10px; }
-
-  .fieldset {
-    grid-template-columns: minmax(0, 1fr);
-    padding: 20px 0;
-  }
 }

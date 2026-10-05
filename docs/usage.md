@@ -47,10 +47,10 @@ If a provider's proxy is unset, the standard `HTTP_PROXY`, `HTTPS_PROXY` and
 ### Globoplay
 
 TV Globo, Futura and ge tv are free with a Globo account. To sign in, open
-the [settings page](#web-interface) and choose **Sign in** under **Globoplay
-account**. telesfor shows a code. Enter it at the address shown, signed in to
-your Globo account there, within five minutes. Globo may ask you to complete
-your profile first.
+the **Globoplay** tab of the [settings page](#web-interface) and choose
+**Sign in**. telesfor shows a code. Enter it at the address shown, signed in
+to your Globo account there, within five minutes. Globo may ask you to
+complete your profile first.
 
 The channels then join Globoplay's tuner, ready to
 [add to Plex](../README.md#connect-plex). The sign-in is kept in the data
@@ -117,10 +117,11 @@ and its data directory is `/var/lib/telesfor`.
 
 ## Web interface
 
-Open `http://<telesfor-host>:5004/` in a browser. The **Settings** page shows
-the tuner and guide addresses to enter in Plex for each provider, the
-[Globoplay](#globoplay) sign-in, the settings telesfor was started with, and
-the channels, marking the ones being watched. It refreshes every five seconds.
+Open `http://<telesfor-host>:5004/` in a browser. The **Settings** page has a
+tab for each provider: the tuner and guide addresses to enter in Plex, its
+sign-in if it has one, as [Globoplay](#globoplay) does, its proxy, and its
+channels, marking the ones being watched. The **Server** tab shows the other
+settings telesfor was started with. The page refreshes every five seconds.
 
 The page asks for no sign-in to telesfor itself: anyone who can reach
 telesfor can open it, and sign Globoplay in or out. It never shows the Globo

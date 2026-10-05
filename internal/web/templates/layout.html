@@ -43,8 +43,26 @@
 </header>
 
 <main class="container">
+  <h1 class="page-title">Settings</h1>
+  <nav class="tabs" aria-label="Settings">
+    {{- range .Tabs}}
+    <a class="tab" href="{{.Path}}"{{if .Current}} aria-current="page"{{end}}{{with .Problem}} title="{{.}}"{{end}}>{{.Name}}{{if .Count}}<span class="tab-count{{if .Problem}} tab-count-warn{{else if .Streams}} tab-count-ok{{end}}">{{.Count}}</span>{{end}}</a>
+    {{- end}}
+  </nav>
   {{template "page" .}}
 </main>
+{{- end}}
+
+{{/* Settings telesfor was started with, as rows of a list of values. */}}
+{{define "started" -}}
+{{- range .}}
+        <dt>{{.Name}}</dt>
+        <dd>{{if .Value}}<code class="value">{{.Value}}</code>{{else}}{{.State}}{{end}}<p class="for"><code>{{.Flag}}</code> or <code>{{.Env}}</code></p></dd>
+{{- end}}
+{{- end}}
+
+{{define "restart" -}}
+<p class="guide-note">telesfor reads its settings when it starts. To change one, set its flag or environment variable and restart. See <a href="https://github.com/combor/telesfor/blob/main/docs/usage.md#configuration">Configuration</a>.</p>
 {{- end}}
 
 {{define "mark" -}}

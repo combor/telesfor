@@ -1,6 +1,7 @@
-// Package web serves the browser interface: a settings page with what to
-// enter in Plex for each provider, the providers' sign-ins and channels, and
-// the settings telesfor was started with.
+// Package web serves the browser interface: a settings page with a tab for
+// each provider, which holds what to enter in Plex for it, its sign-in, its
+// settings and its channels, and a tab for the settings telesfor was started
+// with.
 //
 // static/htmx-4.0.0.min.js is dist/htmx.min.js from the htmx.org 4.0.0 npm
 // package, under the Zero-Clause BSD license.
@@ -24,7 +25,8 @@ var files embed.FS
 
 var (
 	layout       = template.Must(template.ParseFS(files, "templates/layout.html"))
-	settingsPage = parse(layout, "templates/settings.html")
+	providerPage = parse(layout, "templates/provider.html")
+	serverPage   = parse(layout, "templates/server.html")
 )
 
 func parse(base *template.Template, names ...string) *template.Template {
@@ -32,22 +34,34 @@ func parse(base *template.Template, names ...string) *template.Template {
 }
 
 // Handler serves the interface under /ui/. Like the tuners it is open to
-// whoever can reach it, and all it lets them change is a provider's sign-in.
+// whoever can reach it, and all it lets them change is a provider's sign-in
+// and the settings the provider brings itself.
 type Handler struct {
-	Tuners   []*tuner.Tuner // one for each provider
-	Settings []Setting      // as telesfor was started with
-	Version  string
+	Providers []Provider // a tab for each
+	Settings  []Setting  // telesfor's own, as it was started with
+	Version   string
+}
+
+// Provider is a provider's tuner, and the settings of the provider that
+// telesfor was started with, such as its proxy.
+type Provider struct {
+	Tuner    *tuner.Tuner
+	Settings []Setting
 }
 
 // Register adds the interface's routes to mux.
 func (h *Handler) Register(mux *http.ServeMux) {
-	// A page of another site must not sign anyone in or out.
+	// A page of another site must not sign anyone in or out, or change a setting.
 	sameOrigin := http.NewCrossOriginProtection()
 	mux.Handle("GET /{$}", http.RedirectHandler("/ui/", http.StatusSeeOther))
-	mux.Handle("GET /ui/{$}", secure(http.HandlerFunc(h.settings)))
-	mux.Handle("GET /ui/settings", secure(http.HandlerFunc(h.settings)))
+	mux.Handle("GET /ui/{$}", secure(http.HandlerFunc(h.providerTab)))
+	mux.Handle("GET /ui/providers/{provider}", secure(http.HandlerFunc(h.providerTab)))
+	mux.Handle("GET /ui/server", secure(http.HandlerFunc(h.serverTab)))
+	// Where the page was before it had tabs: one left open still refreshes from there.
+	mux.Handle("GET /ui/settings", http.RedirectHandler("/ui/", http.StatusSeeOther))
 	mux.Handle("POST /ui/providers/{provider}/sign-in", sameOrigin.Handler(http.HandlerFunc(h.signIn)))
 	mux.Handle("POST /ui/providers/{provider}/sign-out", sameOrigin.Handler(http.HandlerFunc(h.signOut)))
+	mux.Handle("POST /ui/providers/{provider}/settings", sameOrigin.Handler(http.HandlerFunc(h.configure)))
 	mux.Handle("GET /ui/static/", secure(http.StripPrefix("/ui/static/", staticFiles())))
 }
 
@@ -96,8 +110,14 @@ func staticFiles() http.Handler {
 
 func htmx(r *http.Request) bool { return r.Header.Get("HX-Request") == "true" }
 
-// Render fully before writing so a template error cannot send half a page.
-func render(w http.ResponseWriter, t *template.Template, name string, data any) {
+// render shows a tab: the whole page, or only its refreshing part for htmx.
+// It renders fully before writing so a template error cannot send half a page.
+func render(w http.ResponseWriter, r *http.Request, t *template.Template, data any) {
+	name := "layout"
+	if htmx(r) {
+		name = "update"
+	}
+	w.Header().Add("Vary", "HX-Request")
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, name, data); err != nil {
 		slog.Error("rendering a page", "template", name, "err", err)

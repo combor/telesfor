@@ -1,11 +1,14 @@
 package tvp
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,25 +50,229 @@ func TestChannels(t *testing.T) {
 }
 
 func TestStream(t *testing.T) {
+	var stream string
 	p := serve(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/399697/videos/playlist" || r.URL.Query().Get("videoType") != "LIVE" {
+		switch {
+		case r.URL.Path == "/token/master.m3u8":
+			io.WriteString(w, "#EXTM3U")
+		case r.URL.Path != "/399697/videos/playlist" || r.URL.Query().Get("videoType") != "LIVE":
 			t.Errorf("unexpected request: %s", r.URL)
+		default:
+			io.WriteString(w, `{"sources": {
+				"HLS":  [{"src": "`+stream+`"}],
+				"DASH": [{"src": "https://cdn.example/token/master.mpd"}]
+			}}`)
 		}
-		io.WriteString(w, `{"sources": {
-			"HLS":  [{"src": "https://cdn.example/token/master.m3u8"}],
-			"DASH": [{"src": "https://cdn.example/token/master.mpd"}]
-		}}`)
 	})
+	stream = p.api + "/token/master.m3u8"
 
 	source, err := p.Stream(t.Context(), "399697")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "https://cdn.example/token/master.m3u8"; source.URL != want {
-		t.Errorf("Stream() URL = %q, want %q", source.URL, want)
+	if source.URL != stream {
+		t.Errorf("Stream() URL = %q, want %q", source.URL, stream)
 	}
 	if source.Client != p.client {
 		t.Error("Stream() must hand out the provider's own HTTP client: the token is bound to its address")
+	}
+}
+
+// TVP hands a stream out at its own server or at a router that refuses the
+// addresses of VPNs. A stream that the router refuses must be played from the
+// server.
+func TestStreamRefusedWhereHandedOut(t *testing.T) {
+	own := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "#EXTM3U")
+	}))
+	defer own.Close()
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Forbidden.", http.StatusForbidden)
+	}))
+	defer router.Close()
+
+	var hosts []string // where the API hands the stream out, one call after another
+	asked := 0
+	p := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		host := hosts[min(asked, len(hosts)-1)]
+		asked++
+		io.WriteString(w, `{"sources": {"HLS": [{"src": "`+host+`/token/`+strconv.Itoa(asked)+`/master.m3u8?a=1"}]}}`)
+	})
+	p.pause = time.Millisecond
+	tune := func() (string, error) {
+		source, err := p.Stream(t.Context(), "399697")
+		return source.URL, err
+	}
+
+	// The router alone, and no time to ask again.
+	hosts = []string{router.URL}
+	if got, err := tune(); err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Errorf("Stream() = %q, %v: want the stream refused", got, err)
+	}
+	// With time, it asks until TVP names its server.
+	p.patience, asked = time.Minute, 0
+	hosts = []string{router.URL, router.URL, own.URL}
+	if got, err := tune(); err != nil || got != own.URL+"/token/3/master.m3u8?a=1" {
+		t.Errorf("Stream() = %q, %v: want the third stream handed out, the first at the server", got, err)
+	}
+	// From then on a stream the router refuses plays from that server at once.
+	asked = 0
+	hosts = []string{router.URL}
+	if got, err := tune(); err != nil || got != own.URL+"/token/1/master.m3u8?a=1" || asked != 1 {
+		t.Errorf("Stream() = %q, %v after asking %d times: want the stream handed out, at the server, in one go", got, err, asked)
+	}
+}
+
+// A viewer who leaves while a refused stream is asked for at the server must
+// not make the provider forget the server.
+func TestStreamCancelledKeepsTheServer(t *testing.T) {
+	var hold atomic.Bool // whether the server keeps a request waiting
+	arrived := make(chan struct{}, 1)
+	own := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hold.Load() {
+			arrived <- struct{}{}
+			<-r.Context().Done()
+			return
+		}
+		io.WriteString(w, "#EXTM3U")
+	}))
+	defer own.Close()
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Forbidden.", http.StatusForbidden)
+	}))
+	defer router.Close()
+
+	var host atomic.Pointer[string] // where the API hands the stream out
+	p := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"sources": {"HLS": [{"src": "`+*host.Load()+`/token/master.m3u8?a=1"}]}}`)
+	})
+
+	host.Store(&own.URL)
+	if _, err := p.Stream(t.Context(), "399697"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The viewer leaves once the server has been asked for the refused stream.
+	host.Store(&router.URL)
+	hold.Store(true)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		<-arrived
+		cancel()
+	}()
+	if source, err := p.Stream(ctx, "399697"); err == nil {
+		t.Errorf("Stream() = %q for a viewer who left, want an error", source.URL)
+	}
+
+	hold.Store(false)
+	source, err := p.Stream(t.Context(), "399697")
+	if err != nil || source.URL != own.URL+"/token/master.m3u8?a=1" {
+		t.Errorf("Stream() = %q, %v: want the refused stream at the server, which the provider still knows", source.URL, err)
+	}
+}
+
+// A host that serves no more must not take with it the one another tune has
+// found in the meantime.
+func TestStreamKeepsTheHostFoundMeanwhile(t *testing.T) {
+	const found = "https://found.example"
+	var p *Provider
+	var gone atomic.Bool // whether the server has stopped serving
+	own := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if gone.Load() {
+			p.remember(found) // as another tune does, while this one is asking
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, "#EXTM3U")
+	}))
+	defer own.Close()
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Forbidden.", http.StatusForbidden)
+	}))
+	defer router.Close()
+
+	var host atomic.Pointer[string] // where the API hands the stream out
+	p = serve(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"sources": {"HLS": [{"src": "`+*host.Load()+`/token/master.m3u8?a=1"}]}}`)
+	})
+
+	host.Store(&own.URL)
+	if _, err := p.Stream(t.Context(), "399697"); err != nil {
+		t.Fatal(err)
+	}
+
+	host.Store(&router.URL)
+	gone.Store(true)
+	if source, err := p.Stream(t.Context(), "399697"); err == nil {
+		t.Errorf("Stream() = %q, want the stream refused: the server serves no more", source.URL)
+	}
+	p.mu.Lock()
+	served := p.served
+	p.mu.Unlock()
+	if served != found {
+		t.Errorf("the host that serves is %q, want %q, found while the old one was asked", served, found)
+	}
+}
+
+// A provider that has listed its channels must find out where streams are
+// served before anyone tunes, so that the first stream the router refuses
+// plays at once.
+func TestChannelsLearnWhereStreamsAreServed(t *testing.T) {
+	own := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "#EXTM3U")
+	}))
+	defer own.Close()
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Forbidden.", http.StatusForbidden)
+	}))
+	defer router.Close()
+
+	var asked atomic.Int32 // the times the API was asked for a stream
+	p := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/lives" {
+			io.WriteString(w, `{"items": [{"id": 399699, "title": "TVP INFO"}, {"id": 399697, "title": "TVP 1"}]}`)
+			return
+		}
+		// The API names the router, but for the third time it is asked.
+		host := router.URL
+		if asked.Add(1) == 3 {
+			host = own.URL
+		}
+		io.WriteString(w, `{"sources": {"HLS": [{"src": "`+host+`/token/master.m3u8?a=1"}]}}`)
+	})
+	p.search, p.interval = time.Minute, time.Millisecond
+
+	if _, err := p.Channels(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(time.Millisecond) {
+		p.mu.Lock()
+		served, learning := p.served, p.learning
+		p.mu.Unlock()
+		if served == own.URL && !learning {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after asking %d times the host that serves is %q, want %q", asked.Load(), served, own.URL)
+		}
+	}
+	if got := asked.Load(); got != 3 {
+		t.Errorf("asked %d times, want it to stop once a host served the stream, the third time", got)
+	}
+
+	// The first tune is handed out at the router, and plays from the server.
+	source, err := p.Stream(t.Context(), "399697")
+	if err != nil || source.URL != own.URL+"/token/master.m3u8?a=1" || asked.Load() != 4 {
+		t.Errorf("Stream() = %q, %v after asking %d times: want the stream at the server, in one go", source.URL, err, asked.Load())
+	}
+
+	// With a host known, listing the channels again asks for no stream.
+	if _, err := p.Channels(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := asked.Load(); got != 4 {
+		t.Errorf("asked %d times after the channels were listed again, want 4: a host is known", got)
 	}
 }
 

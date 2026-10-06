@@ -40,6 +40,11 @@ Most TVP channels require a Polish connection. Use `-tvp-proxy` with an HTTP
 proxy that exits in Poland. telesfor sends both API requests and the video
 through that proxy, because TVP ties stream URLs to the requesting IP address.
 
+Not every VPN server in Poland will do. TVP's CDN refuses the addresses of VPN
+providers, and TVP's own servers answer only some of them. If the log says
+that TVP names no server of its own, or streams are refused, try another
+server of the VPN.
+
 Without a Polish connection, channel availability is limited. Subscription
 channels are left out of the lineup, and DRM-protected streams cannot play.
 

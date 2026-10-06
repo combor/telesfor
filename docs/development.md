@@ -30,6 +30,7 @@ flowchart LR
 | `internal/provider/globo` | Globoplay's sign-in, channels, guide and stream URLs. |
 | `internal/provider/ebc` | EBC's channels and streams, and TV Brasil's guide. |
 | `internal/provider/cultura` | TV Cultura's channels, streams and guide. |
+| `internal/provider/francetv` | France Télévisions' channels, guide and stream URLs. |
 | `internal/store` | The bbolt database that keeps sign-ins across restarts. |
 | `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy and startup alignment. |
 | `internal/tuner` | HDHomeRun emulation, streaming endpoints and the XMLTV guide. |
@@ -73,6 +74,7 @@ segment can leave Plex's player without enough data. telesfor joins six
 segments behind the newest and sends those segments immediately, giving the
 player a buffer. This is typically 12 seconds on TVP channels, or 24 seconds
 on channels with longer segments, at the cost of that much live delay.
+France Télévisions' segments are the longest, at up to 46 seconds for the six.
 
 A playlist may hold less than that: TV Cultura's holds six seconds. Such a
 stream starts later instead. telesfor holds it back until nine seconds of it
@@ -120,12 +122,14 @@ go test -race ./...
 CI runs vet and tests with the race detector on every push, checks Go
 formatting and scans for known vulnerabilities.
 
-The tests use recorded responses. To check the providers against TVP's real
-API, and the real sites and streams of EBC and TV Cultura, which CI does daily:
+The tests use recorded responses. To check the providers against the real
+APIs of TVP and France Télévisions, and the real sites and streams of EBC and
+TV Cultura, which CI does daily:
 
 ```sh
 TELESFOR_LIVE=1 go test -count=1 -v -run TestLive \
-  ./internal/provider/tvp ./internal/provider/ebc ./internal/provider/cultura
+  ./internal/provider/tvp ./internal/provider/ebc ./internal/provider/cultura \
+  ./internal/provider/francetv
 ```
 
 Globoplay's needs a telesfor that has signed in, stopped for the test, and a

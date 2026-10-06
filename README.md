@@ -31,12 +31,15 @@ No tuner hardware is needed.
   Canal Educação, [without an account](docs/usage.md#ebc).
 - **TV Cultura's channels.** TV Cultura and Cultura Fast,
   [without an account](docs/usage.md#tv-cultura).
+- **France Télévisions' channels.** France 2, France 3, France 4, France 5
+  and franceinfo, [without an account](docs/usage.md#francetv).
 - **A 48-hour TV guide.** Programme listings come straight from the providers.
 - **Original stream quality.** Up to 1080p, without transcoding in telesfor.
 
 > [!NOTE]
-> Most TVP channels need a Polish connection, and Globoplay needs a Brazilian
-> one. From abroad, use an HTTP proxy with an exit in that country. Paid and
+> Most TVP channels need a Polish connection, Globoplay needs a Brazilian
+> one, and most of France Télévisions' channels need a French one. From
+> abroad, use an HTTP proxy with an exit in that country. Paid and
 > DRM-protected channels are not supported.
 
 ## Quick start
@@ -83,6 +86,7 @@ Each provider is a tuner of its own, with its own guide.
 | Globoplay | `http://<telesfor-host>:5004/globo` | `http://<telesfor-host>:5004/globo/xmltv.xml` |
 | EBC | `http://<telesfor-host>:5004/ebc` | `http://<telesfor-host>:5004/ebc/xmltv.xml` |
 | TV Cultura | `http://<telesfor-host>:5004/cultura` | `http://<telesfor-host>:5004/cultura/xmltv.xml` |
+| france.tv | `http://<telesfor-host>:5004/francetv` | `http://<telesfor-host>:5004/francetv/xmltv.xml` |
 
 1. In Plex, open **Settings → Live TV & DVR** and set up a new DVR.
 2. Add a provider's tuner manually by its address.
@@ -94,8 +98,8 @@ Each provider is a tuner of its own, with its own guide.
    with its own guide address.
 
 Your channels and guide are now available in Plex's **Live TV** section, in
-one list. Globoplay's channels are numbered from 1001, EBC's from 2001 and
-TV Cultura's from 3001, so they follow TVP's.
+one list. Globoplay's channels are numbered from 1001, EBC's from 2001,
+TV Cultura's from 3001 and france.tv's from 4001, so they follow TVP's.
 
 ## Documentation
 

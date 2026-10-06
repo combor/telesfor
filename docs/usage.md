@@ -16,6 +16,7 @@ Use command-line flags or environment variables. Flags take precedence.
 | `-globo-proxy` | `TELESFOR_GLOBO_PROXY` | Unset | HTTP proxy for Globoplay's sign-in, guide and streams. |
 | `-ebc-proxy` | `TELESFOR_EBC_PROXY` | Unset | HTTP proxy for EBC's guide and streams. |
 | `-cultura-proxy` | `TELESFOR_CULTURA_PROXY` | Unset | HTTP proxy for TV Cultura's guide and streams. |
+| `-francetv-proxy` | `TELESFOR_FRANCETV_PROXY` | Unset | HTTP proxy for France Télévisions' guide and streams. |
 | `-data` | `TELESFOR_DATA` | `telesfor` in your user configuration directory | Directory that keeps the sign-ins to providers. |
 | `-debug` | `TELESFOR_DEBUG` | Off | Log requests, upstream fetches and ffmpeg warnings. |
 | `-version` | | | Print the version and exit. |
@@ -92,6 +93,20 @@ has.
 
 TV Cultura takes six to ten seconds to start, longer than other channels:
 see [Streaming details](development.md#why-start-behind-the-live-edge).
+
+### france.tv
+
+France 2, France 3, France 4, France 5 and franceinfo need no account. All
+but franceinfo play only in France. From abroad, set `-francetv-proxy` to an
+HTTP proxy that exits there.
+
+France 3 is the national channel, without the regional programmes. A film
+that france.tv also has in its original language plays in French.
+
+The guide is france.tv's own, under the names of the programmes: an
+episode's name is the first line of its description. France Télévisions
+lists a run of short episodes, as of the children's series on France 4, at
+times that can be minutes off.
 
 ## Build from source
 
@@ -177,8 +192,8 @@ account, and leaves out a proxy's user name and password.
 
 Use `/discover.json` to check the tuner, `/lineup.json` to see the channels,
 or `/xmltv.xml` for the guide. Globoplay's are under `/globo`, EBC's under
-`/ebc` and TV Cultura's under `/cultura`. If you changed the port, update
-these addresses too.
+`/ebc`, TV Cultura's under `/cultura` and france.tv's under `/francetv`. If
+you changed the port, update these addresses too.
 
 ### Reading the log
 
@@ -207,5 +222,6 @@ startup can occur when ffmpeg drops unused stream qualities.
 ### Live delay
 
 telesfor starts a few segments behind the live edge to give Plex a buffer.
-This typically adds 12 to 24 seconds of delay before Plex's own buffering.
+This typically adds 12 to 24 seconds of delay before Plex's own buffering,
+and 40 to 46 on France Télévisions' channels.
 See [Streaming details](development.md#streaming-details) for the reasoning.

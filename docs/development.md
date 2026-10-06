@@ -29,6 +29,7 @@ flowchart LR
 | `internal/provider/tvp` | TVP channels, guide and stream URLs. |
 | `internal/provider/globo` | Globoplay's sign-in, channels, guide and stream URLs. |
 | `internal/provider/ebc` | EBC's channels and streams, and TV Brasil's guide. |
+| `internal/provider/cultura` | TV Cultura's channels, streams and guide. |
 | `internal/store` | The bbolt database that keeps sign-ins across restarts. |
 | `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy and startup alignment. |
 | `internal/tuner` | HDHomeRun emulation, streaming endpoints and the XMLTV guide. |
@@ -73,6 +74,10 @@ segments behind the newest and sends those segments immediately, giving the
 player a buffer. This is typically 12 seconds on TVP channels, or 24 seconds
 on channels with longer segments, at the cost of that much live delay.
 
+A playlist may hold less than that: TV Cultura's holds six seconds. Such a
+stream starts later instead. telesfor holds it back until nine seconds of it
+have come, so TV Cultura takes six to ten seconds to start.
+
 ## Adding a provider
 
 Implement the four methods of `provider.Provider` in a package under
@@ -116,10 +121,11 @@ CI runs vet and tests with the race detector on every push, checks Go
 formatting and scans for known vulnerabilities.
 
 The tests use recorded responses. To check the providers against TVP's real
-API and EBC's real site and streams, which CI does daily:
+API, and the real sites and streams of EBC and TV Cultura, which CI does daily:
 
 ```sh
-TELESFOR_LIVE=1 go test -count=1 -v -run TestLive ./internal/provider/tvp ./internal/provider/ebc
+TELESFOR_LIVE=1 go test -count=1 -v -run TestLive \
+  ./internal/provider/tvp ./internal/provider/ebc ./internal/provider/cultura
 ```
 
 Globoplay's needs a telesfor that has signed in, stopped for the test, and a

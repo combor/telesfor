@@ -9,10 +9,12 @@
 // relay also repairs timestamps that ffmpeg would otherwise have to guess at.
 //
 // What ffmpeg writes is passed on from the point where all of its streams
-// have started, so that the output opens with both picture and sound.
+// have started, so that the output opens with both picture and sound, and
+// once enough of it has come to keep Plex playing.
 package remux
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -81,10 +83,15 @@ func (r *Remuxer) Copy(ctx context.Context, w io.Writer, manifest string, client
 		"-f", "mpegts", "pipe:1",
 	)
 	cmd := exec.CommandContext(ctx, r.ffmpeg, args...)
-	cmd.Stdout = newAligner(w)
+	out := newReserve(w, relay.short.Load)
+	cmd.Stdout = newAligner(out)
 	cmd.Stderr = os.Stderr
 	// ffmpeg talks to the relay only, so a proxy from the environment must not
 	// get in between.
 	cmd.Env = append(os.Environ(), "no_proxy=*")
-	return cmd.Run()
+	err = cmd.Run()
+	if ctx.Err() == nil { // not to a viewer who has left
+		err = cmp.Or(err, out.flush())
+	}
+	return err
 }

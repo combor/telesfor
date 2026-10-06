@@ -1,6 +1,7 @@
 package remux
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"log/slog"
@@ -24,10 +25,12 @@ import (
 // full URL leads ffmpeg away from the relay.
 //
 // Files are passed on as they are, but for MPEG-TS with timestamps that cannot
-// be right: those are repaired on the way. See repairDTS.
+// be right: those are repaired on the way. See repairDTS. A playlist is looked
+// at as it passes, for how many segments it holds. See reserve.
 type relay struct {
 	client *http.Client // fetches everything, and leaves redirects to ffmpeg
 	late   atomic.Int64 // how late the stream stamps its frames to be decoded: see repairDTS
+	short  atomic.Bool  // the stream's playlist holds fewer segments than headStart: see reserve
 
 	mu     sync.Mutex
 	twins  map[string]*http.Server // by the server they stand in for, as scheme://host
@@ -127,6 +130,10 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 		w.Header().Set("Location", location)
 	}
 	w.WriteHeader(resp.StatusCode)
+	var playlist bytes.Buffer
+	if path.Ext(req.URL.Path) == ".m3u8" {
+		resp.Body = io.NopCloser(io.TeeReader(resp.Body, &playlist))
+	}
 	size, err := r.pass(w, resp)
 	if err != nil {
 		if req.Context().Err() == nil {
@@ -135,6 +142,11 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 		// Cutting the connection tells ffmpeg that the file is incomplete.
 		// Ending the response normally would pass the part off as the whole.
 		panic(http.ErrAbortHandler)
+	}
+	// A master playlist lists no segments, and says nothing of how many the
+	// stream's own holds.
+	if segments := bytes.Count(playlist.Bytes(), []byte("#EXTINF")); segments > 0 {
+		r.short.Store(segments < headStart)
 	}
 	slog.Debug("relay: fetched", "file", file, "status", resp.StatusCode, "bytes", size, "took", time.Since(began).Round(time.Millisecond))
 }

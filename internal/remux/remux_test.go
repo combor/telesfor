@@ -265,3 +265,49 @@ func TestCopy(t *testing.T) {
 		t.Errorf("Copy() wrote %d bytes that do not look like MPEG-TS", out.Len())
 	}
 }
+
+// A stream that cannot be read must come to nothing, not even an empty write:
+// the tuner takes the first write for the stream going on air.
+func TestCopyOfNothing(t *testing.T) {
+	remuxer, err := New()
+	if err != nil {
+		t.Skip("ffmpeg is not installed")
+	}
+	upstream := httptest.NewServer(http.NotFoundHandler())
+	defer upstream.Close()
+
+	var out writes
+	if err := remuxer.Copy(t.Context(), &out, upstream.URL+"/live.m3u8", upstream.Client()); err == nil || len(out) != 0 {
+		t.Errorf("Copy() = %v after %d writes, want an error and no write", err, len(out))
+	}
+}
+
+// The relay notes a playlist that holds fewer segments than the head start
+// asks for. A master playlist, which lists none, says nothing either way.
+func TestRelayNotesShortPlaylist(t *testing.T) {
+	segments := 3
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/master.m3u8" {
+			io.WriteString(w, "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=716800\nmedia.m3u8\n")
+			return
+		}
+		io.WriteString(w, "#EXTM3U\n"+strings.Repeat("#EXTINF:2.000,\nsegment.ts\n", segments))
+	}))
+	defer upstream.Close()
+
+	relay, local, err := openRelay(upstream.URL+"/master.m3u8", upstream.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relay.close()
+	manifest, _ := url.Parse(local)
+
+	for _, want := range []bool{true, false} {
+		get(t, manifest, "media.m3u8")
+		get(t, manifest, "")
+		if got := relay.short.Load(); got != want {
+			t.Errorf("a playlist of %d segments: short = %v, want %v", segments, got, want)
+		}
+		segments = headStart
+	}
+}

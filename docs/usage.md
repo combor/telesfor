@@ -15,6 +15,7 @@ Use command-line flags or environment variables. Flags take precedence.
 | `-tvp-proxy` | `TELESFOR_TVP_PROXY` | Unset | HTTP proxy for TVP's channel list, guide and streams. |
 | `-globo-proxy` | `TELESFOR_GLOBO_PROXY` | Unset | HTTP proxy for Globoplay's sign-in, guide and streams. |
 | `-ebc-proxy` | `TELESFOR_EBC_PROXY` | Unset | HTTP proxy for EBC's guide and streams. |
+| `-cultura-proxy` | `TELESFOR_CULTURA_PROXY` | Unset | HTTP proxy for TV Cultura's guide and streams. |
 | `-data` | `TELESFOR_DATA` | `telesfor` in your user configuration directory | Directory that keeps the sign-ins to providers. |
 | `-debug` | `TELESFOR_DEBUG` | Off | Log requests, upstream fetches and ffmpeg warnings. |
 | `-version` | | | Print the version and exit. |
@@ -73,6 +74,19 @@ Only TV Brasil has a guide, and it is the guide of its broadcast: EBC leaves
 out of the web stream what it has no rights to show online. Where EBC lists
 no programme, or leaves one unnamed, the guide has the channel's name in its
 place, an hour at a time, so that Plex can still play and record the channel.
+
+### TV Cultura
+
+TV Cultura and Cultura Fast need no account, and play outside Brazil. If TV
+Cultura stops that, set `-cultura-proxy` to an HTTP proxy that exits there.
+
+Only TV Cultura has a guide, the one on its site. Cultura Play lists
+programmes for Cultura Fast, but the stream does not keep to them, so its
+guide has the channel's name on every hour, as an EBC channel without a guide
+has.
+
+TV Cultura takes six to ten seconds to start, longer than other channels:
+see [Streaming details](development.md#why-start-behind-the-live-edge).
 
 ## Build from source
 
@@ -151,14 +165,15 @@ account, and leaves out a proxy's user name and password.
 | Plex cannot find the tuner | Add it manually. From the Plex server, check that `http://<telesfor-host>:5004/discover.json` is reachable. |
 | Some channels will not play | Check the log for the reason. A region block needs a connection in the provider's country; DRM-protected channels are not supported. |
 | Globoplay has no channels | Sign in on the settings page. See [Globoplay](#globoplay). |
-| An EBC channel is unavailable | EBC is not streaming it at the moment. A proxy or an account will not bring it back. |
+| An EBC or TV Cultura channel is unavailable | The broadcaster is not streaming it at the moment. A proxy or an account will not bring it back. |
 | Plex shows a playback error after its DVR was set up again | Quit and reopen the Plex app. |
 | The guide is missing | Check that `http://<telesfor-host>:5004/xmltv.xml` is reachable from Plex and selected as its XMLTV guide. |
 | Playback stops when the terminal closes | Keep telesfor running for both viewing and scheduled recordings. |
 
 Use `/discover.json` to check the tuner, `/lineup.json` to see the channels,
-or `/xmltv.xml` for the guide. Globoplay's are under `/globo` and EBC's
-under `/ebc`. If you changed the port, update these addresses too.
+or `/xmltv.xml` for the guide. Globoplay's are under `/globo`, EBC's under
+`/ebc` and TV Cultura's under `/cultura`. If you changed the port, update
+these addresses too.
 
 ### Reading the log
 

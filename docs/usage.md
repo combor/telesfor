@@ -203,6 +203,7 @@ Each successful tune reports three events:
 |---|---|
 | `tuning` | A viewer asked for a channel. |
 | `on air` | The first bytes were sent. `startup` is how long the viewer waited. |
+| `quality` | The quality the stream starts in or changes to, and why. `speed` is what the connection was measured at, and `reserve` an estimate of what the player has in hand. |
 | `released` | The viewer disconnected. `after` is the session duration, and `sent` is the amount of data delivered. |
 
 A session that ends just after going on air usually means the viewer gave up
@@ -216,8 +217,16 @@ To see more detail, add `-debug` to your usual command:
 ```
 
 This includes Plex requests, upstream fetches with their size and timing, and
-ffmpeg warnings. Brief `Packet corrupt` or `Invalid NAL unit size` warnings at
-startup can occur when ffmpeg drops unused stream qualities.
+ffmpeg warnings. `HTTP error 404` and `Failed to open segment` warnings at a
+change of quality are how one ffmpeg is told to stop for the next.
+
+### Picture quality
+
+telesfor plays the best quality that the connection to the provider keeps up
+with. It steps down before the picture freezes, and back up when there is
+room. There is nothing to set: the `quality` lines of the log tell what
+happened and why.
+See [Why change quality?](development.md#why-change-quality) for the rules.
 
 ### Live delay
 

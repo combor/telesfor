@@ -2,6 +2,7 @@ package remux
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -27,14 +28,26 @@ import (
 // Files are passed on as they are, but for MPEG-TS with timestamps that cannot
 // be right: those are repaired on the way. See repairDTS. A playlist is looked
 // at as it passes, for how many segments it holds. See reserve.
+//
+// A stream that comes in more than one quality is not read through the twins:
+// see stage.
 type relay struct {
-	client *http.Client // fetches everything, and leaves redirects to ffmpeg
+	client *http.Client // fetches what ffmpeg asks a twin for, and leaves redirects to ffmpeg
+	direct *http.Client // fetches the rest, and follows them
 	late   atomic.Int64 // how late the stream stamps its frames to be decoded: see repairDTS
 	short  atomic.Bool  // the stream's playlist holds fewer segments than headStart: see reserve
 
 	mu     sync.Mutex
 	twins  map[string]*http.Server // by the server they stand in for, as scheme://host
+	kept   *kept                   // the manifest, until ffmpeg asks for it: see qualities
 	closed bool
+}
+
+// kept is a file that was fetched before ffmpeg asked for it.
+type kept struct {
+	address string // where it was found, after redirects
+	kind    string // its Content-Type
+	body    []byte
 }
 
 // openRelay starts a relay for the stream behind the manifest URL. It returns
@@ -52,7 +65,7 @@ func openRelay(manifest string, client *http.Client) (r *relay, local string, er
 	noFollow := *client
 	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-	r = &relay{client: &noFollow, twins: map[string]*http.Server{}}
+	r = &relay{client: &noFollow, direct: client, twins: map[string]*http.Server{}}
 	local, err = r.local(upstream)
 	if err != nil {
 		return nil, "", err
@@ -88,10 +101,54 @@ func (r *relay) local(upstream *url.URL) (string, error) {
 	return "http://" + twin.Addr + upstream.RequestURI(), nil
 }
 
+// qualities fetches the stream's manifest and returns the qualities it lists,
+// if it is a master playlist with more than one to go between. Any other
+// manifest is kept for ffmpeg, which is about to ask for it: once, as a live
+// playlist is another the next time.
+func (r *relay) qualities(ctx context.Context, manifest string) *ladder {
+	fetch, err := http.NewRequestWithContext(ctx, http.MethodGet, manifest, nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := r.direct.Do(fetch)
+	if err != nil {
+		return nil // ffmpeg will meet the same, and Copy will say so
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPlaylist))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	if l := parseMaster(string(body), resp.Request.URL); l != nil {
+		return l
+	}
+	r.mu.Lock()
+	r.kept = &kept{resp.Request.URL.String(), resp.Header.Get("Content-Type"), body}
+	r.mu.Unlock()
+	return nil
+}
+
 // fetch answers a request to a twin with the same path fetched from server.
 func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 	began := time.Now()
 	file := path.Base(req.URL.Path) // for the log: the rest of the path may carry the stream's token
+
+	r.mu.Lock()
+	kept := r.kept
+	if kept != nil && kept.address == server+req.URL.RequestURI() {
+		r.kept = nil
+	} else {
+		kept = nil
+	}
+	r.mu.Unlock()
+	if kept != nil {
+		if kept.kind != "" {
+			w.Header().Set("Content-Type", kept.kind)
+		}
+		w.Write(kept.body)
+		r.count(kept.body)
+		return
+	}
 
 	fetch, err := http.NewRequestWithContext(req.Context(), http.MethodGet, server+req.URL.RequestURI(), nil)
 	if err != nil {
@@ -116,11 +173,6 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 	if resp.StatusCode >= http.StatusBadRequest {
 		slog.Warn("relay: upstream refused", "file", file, "status", resp.Status)
 	}
-	for _, name := range []string{"Content-Type", "Content-Range", "Accept-Ranges"} {
-		if value := resp.Header.Get(name); value != "" {
-			w.Header().Set(name, value)
-		}
-	}
 	if target, err := resp.Location(); err == nil { // a redirect
 		location, err := r.local(target)
 		if err != nil {
@@ -129,7 +181,7 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 		}
 		w.Header().Set("Location", location)
 	}
-	w.WriteHeader(resp.StatusCode)
+	passHeaders(w, resp)
 	var playlist bytes.Buffer
 	if path.Ext(req.URL.Path) == ".m3u8" {
 		resp.Body = io.NopCloser(io.TeeReader(resp.Body, &playlist))
@@ -143,12 +195,17 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 		// Ending the response normally would pass the part off as the whole.
 		panic(http.ErrAbortHandler)
 	}
-	// A master playlist lists no segments, and says nothing of how many the
-	// stream's own holds.
-	if segments := bytes.Count(playlist.Bytes(), []byte("#EXTINF")); segments > 0 {
+	r.count(playlist.Bytes())
+	slog.Debug("relay: fetched", "file", file, "status", resp.StatusCode, "bytes", size, "took", time.Since(began).Round(time.Millisecond))
+}
+
+// count notes whether a playlist holds fewer segments than the head start
+// asks for. A master playlist lists none, and says nothing of how many the
+// stream's own holds.
+func (r *relay) count(playlist []byte) {
+	if segments := bytes.Count(playlist, []byte("#EXTINF")); segments > 0 {
 		r.short.Store(segments < headStart)
 	}
-	slog.Debug("relay: fetched", "file", file, "status", resp.StatusCode, "bytes", size, "took", time.Since(began).Round(time.Millisecond))
 }
 
 // pass copies the body of a response to w. MPEG-TS comes in packets of 188

@@ -235,7 +235,7 @@ func (t *Tuner) stream(w http.ResponseWriter, r *http.Request) {
 	ch.streams.Add(1)
 	defer ch.streams.Add(-1)
 	out := &broadcast{ResponseWriter: w, channel: ch.Name, tuned: tuned}
-	err = t.remux.Copy(r.Context(), out, source.URL, source.Client)
+	err = t.remux.Copy(r.Context(), out, remux.Stream{Manifest: source.URL, Client: source.Client, Name: ch.Name, Route: t.provider.Name()})
 
 	// How a stream ended says most about what went wrong, if anything did.
 	stats := []any{"channel", ch.Name, "after", since(tuned), "sent", megabytes(out.sent)}

@@ -85,8 +85,7 @@ func serve(t *testing.T) (*ebc, *Provider) {
 			w.WriteHeader(e.status)
 			return
 		}
-		// Unlike EBC so far, it answers a request for a range with one.
-		http.ServeContent(w, r, "", time.Time{}, strings.NewReader(e.master))
+		io.WriteString(w, e.master)
 	})
 	mux.HandleFunc("GET /{channel}/EBC_HD-avc1_2300000=10000.m3u8", func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, e.media)
@@ -226,23 +225,6 @@ func TestStream(t *testing.T) {
 		if source.URL != p.channels[0].stream || source.Client != p.client {
 			t.Errorf("Stream() = %+v, want the master playlist and the provider's own HTTP client", source)
 		}
-	}
-
-	// What ffmpeg is to read of it, asking for a range as it does of everything.
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, p.channels[0].stream, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Range", "bytes=0-")
-	resp, err := p.client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	got, _ := io.ReadAll(resp.Body)
-	want := strings.Replace(master, master[strings.Index(master, "#EXT-X-STREAM-INF"):strings.Index(master, "#EXT-X-STREAM-INF:BANDWIDTH=2824007")], "", 1)
-	if string(got) != want || int(resp.ContentLength) != len(want) || resp.StatusCode != http.StatusOK {
-		t.Errorf("the master playlist, %s, %d bytes:\n%s\nwant the whole of it with its best quality only, and the sound:\n%s", resp.Status, resp.ContentLength, got, want)
 	}
 }
 

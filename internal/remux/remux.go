@@ -11,6 +11,10 @@
 // What ffmpeg writes is passed on from the point where all of its streams
 // have started, so that the output opens with both picture and sound, and
 // once enough of it has come to keep Plex playing.
+//
+// A stream that comes in more than one quality is played in the best that the
+// connection keeps up with, which may change as it plays: see controller. It
+// is one ffmpeg after another then, each on a quality: see stage.
 package remux
 
 import (
@@ -25,6 +29,8 @@ import (
 	"os/exec"
 	"path"
 	"strconv"
+	"sync"
+	"time"
 )
 
 // headStart is how many segments before its newest a live stream is joined
@@ -43,6 +49,19 @@ const headStart = 6
 // Remuxer remuxes streams to MPEG-TS.
 type Remuxer struct {
 	ffmpeg string // path to the ffmpeg binary
+
+	hold, calm time.Duration // see plexHold and calm; tests are in more of a hurry
+
+	mu     sync.Mutex
+	routes map[string]*route // what is known of the connections streams come over, by their names
+}
+
+// Stream is a live stream to remux.
+type Stream struct {
+	Manifest string       // the URL of its manifest
+	Client   *http.Client // fetches everything of it
+	Name     string       // what to call it in the log: the channel's name
+	Route    string       // names the connection it comes over: streams of one route share its speed
 }
 
 // New returns a Remuxer. It fails if ffmpeg is not installed.
@@ -51,19 +70,129 @@ func New() (*Remuxer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("remux: ffmpeg is required: %w", err)
 	}
-	return &Remuxer{ffmpeg: ffmpeg}, nil
+	return &Remuxer{ffmpeg: ffmpeg, hold: plexHold, calm: calm, routes: map[string]*route{}}, nil
 }
 
-// Copy remuxes the stream behind the manifest URL to MPEG-TS and writes it to
-// w, fetching everything with client. It returns when the stream ends, ffmpeg
-// fails, or ctx is cancelled.
-func (r *Remuxer) Copy(ctx context.Context, w io.Writer, manifest string, client *http.Client) error {
-	relay, local, err := openRelay(manifest, client)
+// route returns what is known of the connection of a name.
+func (r *Remuxer) route(name string) *route {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.routes[name] == nil {
+		r.routes[name] = &route{streams: map[*controller]float64{}}
+	}
+	return r.routes[name]
+}
+
+// Copy remuxes a stream to MPEG-TS and writes it to w. It returns when the
+// stream ends, ffmpeg fails, or ctx is cancelled.
+func (r *Remuxer) Copy(ctx context.Context, w io.Writer, s Stream) error {
+	relay, local, err := openRelay(s.Manifest, s.Client)
 	if err != nil {
 		return fmt.Errorf("remux: %w", err)
 	}
 	defer relay.close()
 
+	// Only ffmpeg's HLS reader knows where a live stream is joined, and only
+	// HLS comes in qualities to choose from.
+	var qualities *ladder
+	upstream, err := url.Parse(s.Manifest)
+	hls := err == nil && path.Ext(upstream.Path) == ".m3u8"
+	if hls {
+		qualities = relay.qualities(ctx, s.Manifest)
+	}
+	if qualities == nil {
+		out := newReserve(w, relay.short.Load)
+		var join []string
+		if hls {
+			// ffmpeg refuses options it has no use for.
+			join = []string{"-live_start_index", strconv.Itoa(-headStart)}
+		}
+		cmd := r.command(ctx, local, join...)
+		cmd.Stdout = newAligner(out)
+		err = cmd.Run()
+		if ctx.Err() == nil { // not to a viewer who has left
+			err = cmp.Or(err, out.flush())
+		}
+		return err
+	}
+
+	gauge := newMeter(w)
+	ctl := newController(s.Name, qualities, r.route(s.Route), gauge.sent)
+	ctl.hold, ctl.calm = r.hold, r.calm
+	return r.play(ctx, gauge, relay, qualities, ctl)
+}
+
+// play remuxes a stream that comes in more than one quality: a leg at a time,
+// each read by an ffmpeg of its own. See stage.
+func (r *Remuxer) play(ctx context.Context, gauge *meter, relay *relay, qualities *ladder, ctl *controller) (err error) {
+	defer ctl.end()
+	out := newReserve(gauge, relay.short.Load)
+	w := newSplicer(newAligner(out))
+	defer func() {
+		if ctx.Err() == nil { // not to a viewer who has left
+			err = cmp.Or(err, out.flush())
+		}
+	}()
+
+	var st *stage
+	st, err = relay.perform(qualities, ctl, gauge, func(l *leg) error {
+		ctx, stop := context.WithCancel(ctx)
+		// The stage has each leg begin with its first segment.
+		cmd := r.command(ctx, st.input(l), "-live_start_index", "0")
+		written, err := cmd.StdoutPipe()
+		if err == nil {
+			err = cmd.Start()
+		}
+		if err != nil {
+			stop()
+			return err
+		}
+		l.stop, l.out, l.wait = stop, written, sync.OnceValue(cmd.Wait)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("remux: %w", err)
+	}
+	defer st.close()
+
+	l, err := st.begin(ctl.start())
+	if err != nil {
+		return fmt.Errorf("remux: starting ffmpeg: %w", err)
+	}
+	for {
+		n, err := io.Copy(w, l.out)
+		if err != nil {
+			l.stop() // its ffmpeg would wait for somebody to take what it writes
+		}
+		ended := l.wait()
+		l.stop()
+		slog.Debug("remux: ffmpeg ended", "leg", l.n, "quality", qualities.qualities[l.quality].String(), "bytes", n)
+		if err != nil || ctx.Err() != nil {
+			return cmp.Or(err, ended)
+		}
+		// How the ffmpeg of a leg ended matters only if the stream fails with it.
+		next, over, err := st.after(l, n > 0)
+		if over {
+			return nil
+		}
+		if l = next; l == nil {
+			return cmp.Or(err, ended)
+		}
+		if l.anew {
+			// What the ffmpeg before had written has gone nowhere: the
+			// stream starts over.
+			out = newReserve(gauge, relay.short.Load)
+			w = newSplicer(newAligner(out))
+			gauge.started()
+		} else {
+			w.next()
+		}
+	}
+}
+
+// command returns the ffmpeg that remuxes what it reads at an address to
+// MPEG-TS on its standard output, with options for how it reads.
+func (r *Remuxer) command(ctx context.Context, input string, options ...string) *exec.Cmd {
 	// Fatal errors only, unless debugging: ffmpeg tries every quality of a
 	// stream before it settles on the best, and reports dropping the others
 	// as errors.
@@ -71,27 +200,16 @@ func (r *Remuxer) Copy(ctx context.Context, w io.Writer, manifest string, client
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
 		loglevel = "warning"
 	}
-	args := []string{"-hide_banner", "-nostdin", "-loglevel", loglevel}
-	if upstream, err := url.Parse(manifest); err == nil && path.Ext(upstream.Path) == ".m3u8" {
-		// Only ffmpeg's HLS reader knows this option, and ffmpeg refuses
-		// options it has no use for.
-		args = append(args, "-live_start_index", strconv.Itoa(-headStart))
-	}
+	args := append([]string{"-hide_banner", "-nostdin", "-loglevel", loglevel}, options...)
 	args = append(args,
-		"-i", local,
+		"-i", input,
 		"-c", "copy", // change the container only: no transcoding
 		"-f", "mpegts", "pipe:1",
 	)
 	cmd := exec.CommandContext(ctx, r.ffmpeg, args...)
-	out := newReserve(w, relay.short.Load)
-	cmd.Stdout = newAligner(out)
 	cmd.Stderr = os.Stderr
 	// ffmpeg talks to the relay only, so a proxy from the environment must not
 	// get in between.
 	cmd.Env = append(os.Environ(), "no_proxy=*")
-	err = cmd.Run()
-	if ctx.Err() == nil { // not to a viewer who has left
-		err = cmp.Or(err, out.flush())
-	}
-	return err
+	return cmd
 }

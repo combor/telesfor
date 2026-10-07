@@ -30,12 +30,6 @@ low.m3u8
 high.m3u8
 #EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=58976,URI="frames.m3u8"
 `
-	cut = `#EXTM3U
-#EXT-X-VERSION:5
-#EXT-X-MEDIA:TYPE=AUDIO,URI="french.m3u8",GROUP-ID="audio",LANGUAGE="fr",NAME="Francais",DEFAULT=YES,AUTOSELECT=YES
-#EXT-X-STREAM-INF:BANDWIDTH=5947655,AVERAGE-BANDWIDTH=5406959,RESOLUTION=1920x1080,AUDIO="audio",SUBTITLES="text"
-high.m3u8
-`
 	head = `#EXTM3U
 #EXT-X-VERSION:5
 #EXT-X-TARGETDURATION:8
@@ -377,6 +371,7 @@ func TestStream(t *testing.T) {
 		t.Fatalf("Stream() = %+v, %v: want the master playlist at %s", source, err, want)
 	}
 	// As ffmpeg fetches: a range of everything.
+	var from string // where the latest answer says it is from
 	fetch := func(file string) (int, string) {
 		t.Helper()
 		req, _ := http.NewRequest(http.MethodGet, f.url+"/pass1/live/france-2/"+file, nil)
@@ -387,12 +382,13 @@ func TestStream(t *testing.T) {
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
+		from = resp.Request.URL.Path
 		return resp.StatusCode, string(body)
 	}
 
-	// The best quality and the French sound, without asking again.
-	if status, playlist := fetch("index.m3u8?hdnea=short"); status != http.StatusOK || playlist != cut || f.fetched["index.m3u8"] != 1 {
-		t.Errorf("the master playlist: %d after %d fetches\n%s\nwant\n%s", status, f.fetched["index.m3u8"], playlist, cut)
+	// Every quality, for the remuxer to choose from, without asking again.
+	if status, playlist := fetch("index.m3u8?hdnea=short"); status != http.StatusOK || playlist != master || f.fetched["index.m3u8"] != 1 {
+		t.Errorf("the master playlist: %d after %d fetches\n%s\nwant\n%s", status, f.fetched["index.m3u8"], playlist, master)
 	}
 	// The key by its path, for ffmpeg to ask the relay for it.
 	want := head + `#EXT-X-KEY:METHOD=AES-128,URI="/keys/hls.key"` + "\n" + segment
@@ -407,6 +403,11 @@ func TestStream(t *testing.T) {
 	f.revoked["pass1"] = true
 	if status, _ := fetch("high.m3u8"); status != http.StatusOK || f.passes != 2 {
 		t.Errorf("after the pass ran out: %d with %d passes handed out, want 200 with a second", status, f.passes)
+	}
+	// What the playlist lists is found from where the playlist is, and so
+	// asked for with the first pass too: no other is renewed.
+	if want := "/pass1/live/france-2/high.m3u8"; from != want {
+		t.Errorf("after the pass ran out, the playlist is from %s, want it from where it was asked for, %s", from, want)
 	}
 	if status, _ := fetch("high-48337899.ts"); status != http.StatusOK || f.passes != 2 {
 		t.Errorf("the request after: %d with %d passes handed out, want 200 with the second", status, f.passes)

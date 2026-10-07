@@ -34,7 +34,8 @@ No tuner hardware is needed.
 - **France Télévisions' channels.** France 2, France 3, France 4, France 5
   and franceinfo, [without an account](docs/usage.md#francetv).
 - **A 48-hour TV guide.** Programme listings come straight from the providers.
-- **Original stream quality.** Up to 1080p, without transcoding in telesfor.
+- **Original stream quality.** Up to 1080p without transcoding, in the best
+  quality your connection keeps up with.
 
 > [!NOTE]
 > Most TVP channels need a Polish connection, Globoplay needs a Brazilian

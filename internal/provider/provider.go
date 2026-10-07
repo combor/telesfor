@@ -59,6 +59,10 @@ type Programme struct {
 // Source is a live stream: the URL of a manifest ffmpeg can read, such as an
 // HLS playlist, and the HTTP client to fetch it with. The client carries
 // whatever it takes to reach the provider's streams, such as a proxy.
+//
+// A stream that comes in more than one quality is best given as its master
+// playlist, with all of them in it: it is then played in the best quality
+// that the connection keeps up with.
 type Source struct {
 	URL    string
 	Client *http.Client

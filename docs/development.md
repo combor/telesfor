@@ -32,7 +32,8 @@ flowchart LR
 | `internal/provider/cultura` | TV Cultura's channels, streams and guide. |
 | `internal/provider/francetv` | France Télévisions' channels, guide and stream URLs. |
 | `internal/store` | The bbolt database that keeps sign-ins across restarts. |
-| `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy and startup alignment. |
+| `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy, startup alignment and the choice of quality. |
+| `internal/slowproxy` | A throttling proxy for trying telesfor on a slow connection. Not in the binary. |
 | `internal/tuner` | HDHomeRun emulation, streaming endpoints and the XMLTV guide. |
 | `internal/web` | The settings page: Go templates, htmx and a stylesheet, built into the binary. |
 | `cmd/telesfor` | Configuration, and a tuner for each provider. |
@@ -80,6 +81,63 @@ A playlist may hold less than that: TV Cultura's holds six seconds. Such a
 stream starts later instead. telesfor holds it back until nine seconds of it
 have come, so TV Cultura takes six to ten seconds to start.
 
+### Why change quality?
+
+A stream that is too much for the connection arrives slower than it plays,
+and the player runs dry. So a stream that comes in several qualities is played
+in the best one the connection keeps up with.
+
+ffmpeg cannot change quality within a stream. telesfor plays the stream in
+legs instead: one ffmpeg per quality, each reading playlists that the relay
+writes for it. To change, the relay ends the leg's playlists where ffmpeg has
+got to. ffmpeg writes out what it has and stops, and the next one starts at
+the following segment. What they write is joined into one MPEG-TS stream,
+lined up by when frames are shown and with continuity counters carried on,
+so Plex sees one stream whose picture changes size.
+
+Two measures decide:
+
+- **Speed.** How fast each video segment arrived in its fastest half second,
+  in a quick and a slow moving average, of which the lower counts. The whole
+  transfer tells too little: it starts slowly on a connection that was idle,
+  and EBC hands out its newest segment in three seconds where older ones
+  take a quarter of one. The speed is remembered per provider for ten
+  minutes, and what other streams of the provider take is taken off.
+- **Reserve.** An estimate of what the player has in hand: the stream sent,
+  less the time since it went on air, less the five seconds Plex holds back.
+
+| Decision | Rule |
+|---|---|
+| Start | With a remembered speed: the best quality whose average rate is within 70% of it. Either way, the first segment is the test: if after half a second it comes slower than its quality plays, the stream starts over in the best quality within 50% of the speed seen. Nothing has been sent by then. |
+| Step down | When segments take longer to arrive than to play: the last six together while over two thirds of the reserve are left, two in a row below that, a single one under a third. A segment counts as soon as it has taken that long, arrived or not. One that looks like arriving after the reserve has run out, for a tenth of the reserve, is given up and fetched in the lower quality. |
+| To where | The best quality within 80% of the speed, or within 50% when a segment was given up or under a third of the reserve is left. |
+| Step up | One quality at a time: when the stream has caught up with the provider's newest segment, which is when the reserve is back, the next quality is within 70% of the speed, and nothing has arrived slowly or changed for 30 seconds or six segments. |
+| After a step up | One that is taken back within 30 seconds or six segments is not tried again for two minutes, then four, up to thirty. |
+| A quality that will not play | The stream goes on in the quality it had, or in the best if it had none, and leaves that quality alone for two minutes, then four, up to thirty. |
+
+The shares leave room for the speed to vary and for segments larger than the
+average, which the reserve also covers: TVP's take up to half as much again.
+Waiting on a step up, and longer after a failed one, keeps the quality from
+going back and forth.
+
+Only slow segments change the quality. A provider that fails, or a viewer that
+is slow to read, also shrinks the reserve, but no other quality would help.
+
+What to keep in mind:
+
+- The reserve is reckoned, not read from Plex's player.
+- A change of resolution reaches Plex in the stream itself. A client that
+  cannot follow one needs Plex to transcode.
+- A step up at the live edge waits for the ffmpeg before it to stop, up to
+  half a target duration, which the reserve pays once.
+- The way back up takes 30 seconds or six segments a step: about three
+  minutes from the lowest quality to the best on France Télévisions.
+- A stream that starts on a slow connection may stall once in its first
+  seconds, while the head start is still arriving.
+- A provider that is slow to hand out a segment looks like a slow connection.
+  EBC is at times, and the quality then dips for a minute or two.
+- A stream of one quality is played as before, and not measured.
+
 ## Adding a provider
 
 Implement the four methods of `provider.Provider` in a package under
@@ -121,6 +179,22 @@ go test -race ./...
 
 CI runs vet and tests with the race detector on every push, checks Go
 formatting and scans for known vulnerabilities.
+
+To see how the choice of quality fares on simulated connections, against
+always playing the best:
+
+```sh
+go test -v -run TestAdaptation ./internal/remux
+```
+
+To try it on a real connection, put the throttling proxy in front of a
+provider, and change its rate as the stream plays:
+
+```sh
+go run ./internal/slowproxy -rate 20M
+./telesfor -tvp-proxy http://127.0.0.1:8899
+curl 'http://127.0.0.1:8899/rate?to=3M'
+```
 
 The tests use recorded responses. To check the providers against the real
 APIs of TVP and France Télévisions, and the real sites and streams of EBC and

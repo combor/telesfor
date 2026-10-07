@@ -100,7 +100,6 @@ func New(proxy string) (*Provider, error) {
 
 // through returns a provider that reaches the channels with client.
 func through(client *http.Client, channels []channel) *Provider {
-	client.Transport = oneQuality{client.Transport, channels}
 	return &Provider{client: client, channels: channels}
 }
 
@@ -240,7 +239,7 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 		return provider.Source{}, err
 	}
 	// Whether the stream is encrypted, or has stopped, shows in the playlist
-	// of its one quality.
+	// of a quality: the best, which is the one most likely to be played.
 	media := master
 	if uri := quality(master); uri != "" {
 		address, err := at.Parse(uri)
@@ -271,86 +270,25 @@ func (p *Provider) find(id string) (channel, bool) {
 	return p.channels[i], true
 }
 
-// quality returns the URI of the first quality in a master playlist, which is
-// the only one in a channel's, or "" for a playlist that is not one.
-func quality(master string) string {
-	listed := false // the line before announced a quality
-	for line := range strings.Lines(master) {
-		line = strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
-			listed = true
-		case listed && line != "" && !strings.HasPrefix(line, "#"):
-			return line
-		}
-	}
-	return ""
-}
-
-// oneQuality is the transport of the provider's HTTP client. It passes on
-// what it fetches as it is, but for a channel's master playlist, which it cuts
-// down to the best quality.
-//
-// Given them all, ffmpeg reads the start of every quality before it settles
-// on the best. EBC's CDN takes seconds over a segment that nobody nearby has
-// asked for yet, which far from Brazil is most of them: a channel took up to
-// fifteen seconds to start.
-type oneQuality struct {
-	http.RoundTripper
-	channels []channel
-}
-
-func (t oneQuality) RoundTrip(req *http.Request) (*http.Response, error) {
-	if !slices.ContainsFunc(t.channels, func(ch channel) bool { return ch.stream == req.URL.String() }) {
-		return t.RoundTripper.RoundTrip(req)
-	}
-	// The whole of it, even for ffmpeg, which asks for a range of everything:
-	// a part of a playlist is nothing to cut down.
-	whole := req.Clone(req.Context())
-	whole.Header.Del("Range")
-	resp, err := t.RoundTripper.RoundTrip(whole)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		return resp, err
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	resp.Body.Close()
-	if err != nil {
-		return nil, err
-	}
-	playlist := best(string(body))
-	resp.Body = io.NopCloser(strings.NewReader(playlist))
-	resp.ContentLength = int64(len(playlist))
-	resp.Header.Set("Content-Length", strconv.Itoa(len(playlist)))
-	return resp, nil
-}
-
-// best returns a master playlist without its qualities other than the highest.
-// What they share, such as the sound, stays.
-func best(master string) string {
+// quality returns the URI of the highest quality in a master playlist, or ""
+// for a playlist that is not one.
+func quality(master string) (uri string) {
 	lines := strings.Split(master, "\n")
-	keep, most := -1, -1 // the line that announces the highest quality, and its bandwidth
+	most := -1
 	for i, line := range lines {
 		attributes, ok := strings.CutPrefix(line, "#EXT-X-STREAM-INF:")
-		if !ok {
+		if !ok || i+1 >= len(lines) {
 			continue
 		}
 		for attribute := range strings.SplitSeq(attributes, ",") {
 			if bandwidth, ok := strings.CutPrefix(attribute, "BANDWIDTH="); ok {
-				if n, _ := strconv.Atoi(bandwidth); n > most {
-					keep, most = i, n
+				if n, _ := strconv.Atoi(strings.TrimSpace(bandwidth)); n > most {
+					most, uri = n, strings.TrimSpace(lines[i+1])
 				}
 			}
 		}
 	}
-	var kept []string
-	for i := 0; i < len(lines); i++ {
-		if strings.HasPrefix(lines[i], "#EXT-X-STREAM-INF:") && i != keep {
-			i++ // its URI is the line after
-			continue
-		}
-		kept = append(kept, lines[i])
-	}
-	return strings.Join(kept, "\n")
+	return uri
 }
 
 // playlist fetches an HLS playlist of a channel, and returns it with the

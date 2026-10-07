@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -256,7 +257,7 @@ func TestCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := remuxer.Copy(t.Context(), &out, router.URL+"/live.m3u8", router.Client()); err != nil {
+	if err := remuxer.Copy(t.Context(), &out, Stream{Manifest: router.URL + "/live.m3u8", Client: router.Client()}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -277,8 +278,39 @@ func TestCopyOfNothing(t *testing.T) {
 	defer upstream.Close()
 
 	var out writes
-	if err := remuxer.Copy(t.Context(), &out, upstream.URL+"/live.m3u8", upstream.Client()); err == nil || len(out) != 0 {
+	if err := remuxer.Copy(t.Context(), &out, Stream{Manifest: upstream.URL + "/live.m3u8", Client: upstream.Client()}); err == nil || len(out) != 0 {
 		t.Errorf("Copy() = %v after %d writes, want an error and no write", err, len(out))
+	}
+}
+
+// A manifest is fetched to see whether it lists qualities to choose from. One
+// that does not is kept for ffmpeg's first look at it, and fetched anew for
+// every look after: a live playlist changes.
+func TestRelayKeepsManifest(t *testing.T) {
+	const playlist = "#EXTM3U\n#EXTINF:2.000,\nsegment.ts\n"
+	var fetched atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetched.Add(1)
+		io.WriteString(w, playlist)
+	}))
+	defer upstream.Close()
+
+	relay, local, err := openRelay(upstream.URL+"/media.m3u8", upstream.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relay.close()
+	if l := relay.qualities(t.Context(), upstream.URL+"/media.m3u8"); l != nil {
+		t.Fatalf("found %d qualities in the playlist of one", len(l.qualities))
+	}
+	manifest, _ := url.Parse(local)
+	for look, want := range []int32{1, 2} {
+		if got := get(t, manifest, ""); got.status != 200 || got.body != playlist || fetched.Load() != want {
+			t.Errorf("look %d: got %d %q after %d fetches, want the playlist after %d", look+1, got.status, got.body, fetched.Load(), want)
+		}
+	}
+	if !relay.short.Load() {
+		t.Error("the kept playlist of one segment was not noted as short")
 	}
 }
 

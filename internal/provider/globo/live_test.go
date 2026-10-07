@@ -87,19 +87,37 @@ func TestLive(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, source.URL, nil)
-			if err != nil {
-				t.Fatal(err)
+			get := func(address string) (*http.Response, string) {
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, address, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp, err := source.Client.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return resp, string(body)
 			}
-			resp, err := source.Client.Do(req)
-			if err != nil {
-				t.Fatal(err)
+			// The stream's URL is of its master playlist. The first quality
+			// in it tells whether the stream can be played.
+			resp, playlist := get(source.URL)
+			if _, quality, listed := strings.Cut(playlist, "#EXT-X-STREAM-INF:"); listed {
+				_, quality, _ = strings.Cut(quality, "\n") // after its attributes
+				quality, _, _ = strings.Cut(quality, "\n")
+				address, err := resp.Request.URL.Parse(strings.TrimSpace(quality)) // after redirects
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp, playlist = get(address.String())
 			}
-			defer resp.Body.Close()
-			playlist, err := io.ReadAll(resp.Body)
-			if err != nil || resp.StatusCode != http.StatusOK || !strings.HasPrefix(string(playlist), "#EXTM3U") ||
-				!strings.Contains(string(playlist), "#EXTINF") || strings.Contains(string(playlist), "#EXT-X-KEY") {
-				t.Errorf("playlist: %s, %v, starting %.40q: want an HLS playlist of one quality, in the clear", resp.Status, err, playlist)
+			if resp.StatusCode != http.StatusOK || !strings.HasPrefix(playlist, "#EXTM3U") ||
+				!strings.Contains(playlist, "#EXTINF") || strings.Contains(playlist, "#EXT-X-KEY") {
+				t.Errorf("playlist: %s, starting %.40q: want an HLS playlist of one quality, in the clear", resp.Status, playlist)
 			}
 		})
 	}

@@ -81,16 +81,16 @@ func TestLive(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Stream has read the playlists itself. What ffmpeg is to read
-			// is the master with one quality left.
+			// Stream has read the playlists itself. What is played is the
+			// master, with the qualities to choose from and their sound.
 			resp, err := source.Client.Get(source.URL)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer resp.Body.Close()
 			master, _ := io.ReadAll(resp.Body)
-			if strings.Count(string(master), "#EXT-X-STREAM-INF:") != 1 || strings.Count(string(master), "TYPE=AUDIO") != 1 {
-				t.Errorf("the master playlist, want one quality and one sound:\n%s", master)
+			if strings.Count(string(master), "#EXT-X-STREAM-INF:") < 2 || !strings.Contains(string(master), "TYPE=AUDIO") {
+				t.Errorf("the master playlist, want more than one quality and the sound:\n%s", master)
 			}
 		})
 	}

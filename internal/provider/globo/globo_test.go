@@ -104,18 +104,6 @@ func serve(t *testing.T, db *bolt.DB) (*globo, *Provider) {
 		}
 		fmt.Fprintf(w, `{"sources": [{"url": "http://%s/live/token/playlist.m3u8"}], "resource": {"drm_protection_enabled": %t}}`, r.Host, g.drm)
 	})
-	// Every quality has the sound in it, and the best is not the first.
-	mux.HandleFunc("GET /live/token/playlist.m3u8", func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=2924000,AVERAGE-BANDWIDTH=2658000,CODECS="mp4a.40.2,avc1.64001F",RESOLUTION=1280x720
-audio=128000-video=2378944.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=6577000,AVERAGE-BANDWIDTH=5979000,CODECS="mp4a.40.2,avc1.640029",RESOLUTION=1920x1080
-audio=128000-video=5512000.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=1218000,AVERAGE-BANDWIDTH=1107000,CODECS="mp4a.40.2,avc1.64001F",RESOLUTION=640x360
-audio=128000-video=915968.m3u8
-`)
-	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
@@ -384,8 +372,8 @@ func TestStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.URL != p.login+"/live/token/audio=128000-video=5512000.m3u8" || source.Client != p.client {
-		t.Errorf("Stream() = %+v, want the best quality of Globo's stream and the provider's client", source)
+	if source.URL != p.login+"/live/token/playlist.m3u8" || source.Client != p.client {
+		t.Errorf("Stream() = %+v, want Globo's stream and the provider's client", source)
 	}
 	if missing := lacks(*g.asked.Load(), "Bearer session ", `"video_id":"22"`, `"version":2`); missing != nil ||
 		strings.Contains(*g.asked.Load(), "dvr") {

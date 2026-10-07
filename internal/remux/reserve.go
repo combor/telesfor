@@ -88,3 +88,9 @@ func clockReference(packet []byte) (int64, bool) {
 	}
 	return int64(packet[6])<<25 | int64(packet[7])<<17 | int64(packet[8])<<9 | int64(packet[9])<<1 | int64(packet[10])>>7, true
 }
+
+// setClockReference writes a time over the one on the clock a packet carries.
+func setClockReference(packet []byte, t int64) {
+	packet[6], packet[7], packet[8], packet[9] = byte(t>>25), byte(t>>17), byte(t>>9), byte(t>>1)
+	packet[10] = packet[10]&0x7f | byte(t)<<7
+}

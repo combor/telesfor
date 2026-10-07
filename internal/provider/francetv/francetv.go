@@ -492,7 +492,7 @@ func (p *Provider) stream(ctx context.Context, ch channel) (provider.Source, err
 	// Whether the stream is encrypted, has stopped or is kept from this
 	// address shows in its one quality: the playlists are handed out
 	// anywhere, the picture and the sound are not.
-	cut, quality := best(master)
+	quality := best(master)
 	media, within := master, at
 	if quality != "" {
 		if within, err = at.Parse(quality); err != nil {
@@ -545,7 +545,7 @@ func (p *Provider) stream(ctx context.Context, ch channel) (provider.Source, err
 	// A stream handed out as the playlist of its one quality has no master
 	// to answer with: ffmpeg is to read that playlist anew as it grows.
 	if quality != "" {
-		transport.master, transport.playlist = at, cut
+		transport.master, transport.playlist = at, master
 	}
 	client.Transport = transport
 	return provider.Source{URL: signed, Client: &client}, nil
@@ -671,62 +671,36 @@ func (p *Provider) playlist(ctx context.Context, ch channel, address *url.URL) (
 	return string(body), nil
 }
 
-// best returns a master playlist cut down to its highest quality and the
-// sound that goes with it by default, and the URI of that quality, which is
+// best returns the URI of the highest quality in a master playlist, which is
 // empty for a playlist that is not a master.
-//
-// Given all of it, ffmpeg reads the start of six qualities, three sounds and
-// the subtitles before it settles on what to play, each with a playlist of
-// four hours.
-func best(master string) (playlist, quality string) {
+func best(master string) (quality string) {
 	lines := strings.Split(master, "\n")
-	keep, most := -1, -1 // the line that announces the highest quality, and its bandwidth
-	sound := -1          // the line of the sound to keep
+	most := -1
 	for i, line := range lines {
-		if attributes, ok := strings.CutPrefix(line, "#EXT-X-STREAM-INF:"); ok {
-			for attribute := range strings.SplitSeq(attributes, ",") {
-				if bandwidth, ok := strings.CutPrefix(attribute, "BANDWIDTH="); ok {
-					if n, _ := strconv.Atoi(strings.TrimSpace(bandwidth)); n > most {
-						keep, most = i, n
-					}
+		attributes, ok := strings.CutPrefix(line, "#EXT-X-STREAM-INF:")
+		if !ok || i+1 >= len(lines) {
+			continue
+		}
+		for attribute := range strings.SplitSeq(attributes, ",") {
+			if bandwidth, ok := strings.CutPrefix(attribute, "BANDWIDTH="); ok {
+				if n, _ := strconv.Atoi(strings.TrimSpace(bandwidth)); n > most {
+					most, quality = n, strings.TrimSpace(lines[i+1])
 				}
 			}
 		}
-		// French, where a film also comes in its own language and described
-		// for the blind.
-		if isSound(line) && (sound < 0 || (strings.Contains(line, "DEFAULT=YES") && !strings.Contains(lines[sound], "DEFAULT=YES"))) {
-			sound = i
-		}
 	}
-	var kept []string
-	for i := 0; i < len(lines); i++ {
-		switch line := lines[i]; {
-		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:") && i != keep:
-			i++ // its URI is the line after
-			continue
-		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:") && i+1 < len(lines):
-			quality = strings.TrimSpace(lines[i+1])
-		case strings.HasPrefix(line, "#EXT-X-MEDIA:") && i != sound, strings.HasPrefix(line, "#EXT-X-I-FRAME-STREAM-INF:"):
-			continue
-		}
-		kept = append(kept, lines[i])
-	}
-	return strings.Join(kept, "\n"), quality
+	return quality
 }
 
-// isSound tells whether a line of a master playlist announces a sound.
-func isSound(line string) bool {
-	return strings.HasPrefix(line, "#EXT-X-MEDIA:") && strings.Contains(line, "TYPE=AUDIO")
-}
-
-// session is the transport of a stream's HTTP client, which ffmpeg reads the
-// stream through. It answers for the master playlist with the one that best
-// has cut down, and keeps the stream's pass good.
+// session is the transport of a stream's HTTP client, which the stream is
+// read through. It answers for the master playlist with the one that was read
+// when the stream was looked at, which saves asking for it again, and keeps
+// the stream's pass good.
 //
 // The pass is in the path of every address of the stream, and lasts six
-// hours. ffmpeg goes on asking with the one it started with, so a request
-// that is refused is sent again with a new pass, which the requests after it
-// then go with.
+// hours. The stream goes on being asked for with the one it started with, so
+// a request that is refused is sent again with a new pass, which the requests
+// after it then go with.
 type session struct {
 	http.RoundTripper
 	master   *url.URL                     // where the master playlist is; nil if the stream has none
@@ -767,7 +741,13 @@ func (s *session) RoundTrip(req *http.Request) (*http.Response, error) {
 		if file, ok := strings.CutPrefix(out.URL.Path, s.first+"/"); ok && s.first != "" {
 			out.URL.Path, out.URL.RawPath = pass+"/"+file, ""
 		}
-		return s.RoundTripper.RoundTrip(out)
+		resp, err := s.RoundTripper.RoundTrip(out)
+		if resp != nil {
+			// The answer is to what was asked. What a playlist lists is
+			// then asked for the same way, with the pass that is renewed.
+			resp.Request = req
+		}
+		return resp, err
 	}
 	s.mu.Lock()
 	pass := s.pass

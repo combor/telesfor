@@ -4,7 +4,6 @@
 package globo
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -266,9 +265,9 @@ func (p *Provider) relist(broadcasts json.RawMessage) {
 	}
 }
 
-// Stream asks Globo for a fresh HLS URL of the channel, and returns its best
-// quality. The URL carries a token of its own, so fetching the stream takes no
-// sign-in.
+// Stream asks Globo for a fresh HLS URL of the channel: its master playlist,
+// with every quality in it. The URL carries a token of its own, so fetching
+// the stream takes no sign-in.
 func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Source, error) {
 	var media string
 	p.mu.Lock()
@@ -322,61 +321,7 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 	case len(answer.Sources) == 0 || answer.Sources[0].URL == "":
 		return provider.Source{}, errors.New("globo: channel has no stream")
 	}
-	best, err := p.best(ctx, answer.Sources[0].URL)
-	if err != nil {
-		return provider.Source{}, fmt.Errorf("globo: reading the stream's qualities: %w", err)
-	}
-	return provider.Source{URL: best, Client: p.client}, nil
-}
-
-// best returns the playlist of the highest quality in a master playlist.
-//
-// Every quality of Globo's has the sound in it. Given them all, ffmpeg takes
-// the picture from the best and the sound from the first, and so downloads
-// two.
-func (p *Provider) best(ctx context.Context, master string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, master, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return "", errors.Unwrap(err) // without the URL, which carries the stream's token
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", errors.New(resp.Status)
-	}
-
-	best, most, next := "", -1, -1 // next is the bandwidth of the quality whose URI comes next
-	lines := bufio.NewScanner(resp.Body)
-	for lines.Scan() {
-		line := strings.TrimSpace(lines.Text())
-		if attributes, ok := strings.CutPrefix(line, "#EXT-X-STREAM-INF:"); ok {
-			next = 0
-			for attribute := range strings.SplitSeq(attributes, ",") {
-				if bandwidth, ok := strings.CutPrefix(attribute, "BANDWIDTH="); ok {
-					next, _ = strconv.Atoi(bandwidth)
-				}
-			}
-		} else if line != "" && !strings.HasPrefix(line, "#") && next >= 0 {
-			if next > most {
-				best, most = line, next
-			}
-			next = -1
-		}
-	}
-	if err := lines.Err(); err != nil {
-		return "", err
-	}
-	if best == "" {
-		return master, nil // not a master playlist: the stream has one quality
-	}
-	playlist, err := resp.Request.URL.Parse(best) // after redirects
-	if err != nil {
-		return "", err
-	}
-	return playlist.String(), nil
+	return provider.Source{URL: answer.Sources[0].URL, Client: p.client}, nil
 }
 
 // query asks Globoplay's GraphQL API and decodes the data of its answer into

@@ -20,6 +20,7 @@ import (
 	"github.com/combor/telesfor/internal/provider/ebc"
 	"github.com/combor/telesfor/internal/provider/francetv"
 	"github.com/combor/telesfor/internal/provider/globo"
+	"github.com/combor/telesfor/internal/provider/tf1"
 	"github.com/combor/telesfor/internal/provider/tvp"
 	"github.com/combor/telesfor/internal/remux"
 	"github.com/combor/telesfor/internal/store"
@@ -43,6 +44,8 @@ func main() {
 		"HTTP proxy for TV Cultura, should it block its channels outside Brazil (env TELESFOR_CULTURA_PROXY)")
 	francetvProxy := flag.String("francetv-proxy", os.Getenv("TELESFOR_FRANCETV_PROXY"),
 		"HTTP proxy for France Télévisions, which blocks most channels outside France (env TELESFOR_FRANCETV_PROXY)")
+	tf1Proxy := flag.String("tf1-proxy", os.Getenv("TELESFOR_TF1_PROXY"),
+		"HTTP proxy for TF1+, which blocks most channels outside France (env TELESFOR_TF1_PROXY)")
 	data := flag.String("data", dataDir(),
 		"directory to keep sign-ins in (env TELESFOR_DATA)")
 	debug := flag.Bool("debug", os.Getenv("TELESFOR_DEBUG") != "",
@@ -66,13 +69,13 @@ func main() {
 	if *debug {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
-	if err := run(*listen, *tvpProxy, *globoProxy, *ebcProxy, *culturaProxy, *francetvProxy, *data, *debug); err != nil {
+	if err := run(*listen, *tvpProxy, *globoProxy, *ebcProxy, *culturaProxy, *francetvProxy, *tf1Proxy, *data, *debug); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(listen, tvpProxy, globoProxy, ebcProxy, culturaProxy, francetvProxy, data string, debug bool) error {
+func run(listen, tvpProxy, globoProxy, ebcProxy, culturaProxy, francetvProxy, tf1Proxy, data string, debug bool) error {
 	if data == "" {
 		return errors.New("no home directory to keep sign-ins in: set -data")
 	}
@@ -102,6 +105,10 @@ func run(listen, tvpProxy, globoProxy, ebcProxy, culturaProxy, francetvProxy, da
 	if err != nil {
 		return err
 	}
+	tf1Provider, err := tf1.New(tf1Proxy, db)
+	if err != nil {
+		return err
+	}
 
 	// Every TV source plugs in here, with a tuner of its own and the settings
 	// it was started with, for its tab of the settings page. TVP's tuner is at
@@ -121,6 +128,8 @@ func run(listen, tvpProxy, globoProxy, ebcProxy, culturaProxy, francetvProxy, da
 			[]web.Setting{proxySetting(culturaProxy, "-cultura-proxy", "TELESFOR_CULTURA_PROXY")}},
 		{francetvProvider, tuner.Device{ID: "7E1E5F08", Name: "france.tv", Path: "/francetv", First: 4001},
 			[]web.Setting{proxySetting(francetvProxy, "-francetv-proxy", "TELESFOR_FRANCETV_PROXY")}},
+		{tf1Provider, tuner.Device{ID: "7E1E5F09", Name: "TF1+", Path: "/tf1", First: 5001},
+			[]web.Setting{proxySetting(tf1Proxy, "-tf1-proxy", "TELESFOR_TF1_PROXY")}},
 	}
 
 	remuxer, err := remux.New()

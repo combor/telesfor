@@ -17,6 +17,7 @@ Use command-line flags or environment variables. Flags take precedence.
 | `-ebc-proxy` | `TELESFOR_EBC_PROXY` | Unset | HTTP proxy for EBC's guide and streams. |
 | `-cultura-proxy` | `TELESFOR_CULTURA_PROXY` | Unset | HTTP proxy for TV Cultura's guide and streams. |
 | `-francetv-proxy` | `TELESFOR_FRANCETV_PROXY` | Unset | HTTP proxy for France Télévisions' guide and streams. |
+| `-tf1-proxy` | `TELESFOR_TF1_PROXY` | Unset | HTTP proxy for TF1+'s sign-in, guide and streams. |
 | `-data` | `TELESFOR_DATA` | `telesfor` in your user configuration directory | Directory that keeps the sign-ins to providers. |
 | `-debug` | `TELESFOR_DEBUG` | Off | Log requests, upstream fetches and ffmpeg warnings. |
 | `-version` | | | Print the version and exit. |
@@ -108,6 +109,28 @@ episode's name is the first line of its description. France Télévisions
 lists a run of short episodes, as of the children's series on France 4, at
 times that can be minutes off.
 
+### TF1+
+
+TF1, TFX and TF1 Séries Films are free with a TF1+ account, and LCI needs
+none. To sign in, open the **TF1+** tab of the [settings page](#web-interface)
+and choose **Sign in**. telesfor shows a code, and a link that fills it in.
+Follow the link within five minutes, signed in to your TF1+ account there.
+
+The channels then join LCI on TF1+'s tuner, ready to
+[add to Plex](../README.md#connect-plex). The sign-in is kept in the data
+directory, and telesfor renews it as it goes. If TF1 stops accepting it, the
+settings page says so, and you sign in again there.
+
+All but LCI play only in France. From abroad, set `-tf1-proxy` to an HTTP
+proxy that exits there.
+
+TMC is left out: TF1+ streams it DRM-protected. A programme that TF1+ also
+has in its original language, or with audio description, plays in French.
+
+The guide is the one TF1 publishes for the press. It has the night as one
+programme, and nothing for LCI, whose guide has the channel's name on every
+hour, as an EBC channel without a guide has.
+
 ## Build from source
 
 Install the Go version listed in [go.mod](../go.mod), or a newer version, and
@@ -174,8 +197,8 @@ The addresses are where your browser reached telesfor. Behind a reverse
 proxy, they are where the proxy reaches it.
 
 The page asks for no sign-in to telesfor itself: anyone who can reach
-telesfor can open it, and sign Globoplay in or out. It never shows the Globo
-account, and leaves out a proxy's user name and password.
+telesfor can open it, and sign Globoplay or TF1+ in or out. It never shows
+the accounts, and leaves out a proxy's user name and password.
 
 ## Troubleshooting
 
@@ -185,6 +208,7 @@ account, and leaves out a proxy's user name and password.
 | Plex cannot find the tuner | Add it manually. From the Plex server, check that `http://<telesfor-host>:5004/discover.json` is reachable. |
 | Some channels will not play | Check the log for the reason. A region block needs a connection in the provider's country; DRM-protected channels are not supported. |
 | Globoplay has no channels | Sign in on the settings page. See [Globoplay](#globoplay). |
+| TF1+ has LCI only | Sign in on the settings page. See [TF1+](#tf1). |
 | An EBC or TV Cultura channel is unavailable | The broadcaster is not streaming it at the moment. A proxy or an account will not bring it back. |
 | Plex shows a playback error after its DVR was set up again | Quit and reopen the Plex app. |
 | The guide is missing | Check that `http://<telesfor-host>:5004/xmltv.xml` is reachable from Plex and selected as its XMLTV guide. |
@@ -192,8 +216,8 @@ account, and leaves out a proxy's user name and password.
 
 Use `/discover.json` to check the tuner, `/lineup.json` to see the channels,
 or `/xmltv.xml` for the guide. Globoplay's are under `/globo`, EBC's under
-`/ebc`, TV Cultura's under `/cultura` and france.tv's under `/francetv`. If
-you changed the port, update these addresses too.
+`/ebc`, TV Cultura's under `/cultura`, france.tv's under `/francetv` and
+TF1+'s under `/tf1`. If you changed the port, update these addresses too.
 
 ### Reading the log
 

@@ -58,7 +58,7 @@ func (c *club) Channels(context.Context) ([]provider.Channel, error) {
 }
 
 func (c *club) SignIn(context.Context) error {
-	c.login = provider.Login{State: provider.Pending, Code: "ABCDEFGH", URL: "https://club.example/activate", Expires: time.Now().Add(5 * time.Minute)}
+	c.login = provider.Login{State: provider.Pending, Code: "ABCDEFGH", URL: "https://club.example/activate?code=ABCDEFGH", Expires: time.Now().Add(5 * time.Minute)}
 	return nil
 }
 
@@ -283,7 +283,7 @@ func TestSignIn(t *testing.T) {
 	}
 	if missing := lacks(tab(),
 		`<span class="badge">Waiting for the code</span>`,
-		`<a href="https://club.example/activate" target="_blank" rel="noopener noreferrer">club.example/activate</a>`,
+		`<a href="https://club.example/activate?code=ABCDEFGH" target="_blank" rel="noopener noreferrer">club.example/activate</a>`,
 		`<code class="value code">ABCDEFGH</code>`,
 		"The code works for another 5 minutes.",
 		`<form method="post" action="/ui/providers/club/sign-out"><button class="button">Cancel</button></form>`,

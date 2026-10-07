@@ -143,8 +143,12 @@ func (a accountView) Label() string {
 	return "Signed out"
 }
 
-// Site is the address to enter the code at, as the page shows it.
-func (a accountView) Site() string { return strings.TrimPrefix(a.URL, "https://") }
+// Site is the address to enter the code at, as the page shows it: without
+// what a provider adds to have the code filled in.
+func (a accountView) Site() string {
+	site, _, _ := strings.Cut(strings.TrimPrefix(a.URL, "https://"), "?")
+	return site
+}
 
 // Left is how long the code still works, in whole minutes: the page is
 // refreshed every few seconds.

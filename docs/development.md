@@ -31,6 +31,7 @@ flowchart LR
 | `internal/provider/ebc` | EBC's channels and streams, and TV Brasil's guide. |
 | `internal/provider/cultura` | TV Cultura's channels, streams and guide. |
 | `internal/provider/francetv` | France Télévisions' channels, guide and stream URLs. |
+| `internal/provider/tf1` | TF1+'s sign-in, channels, guide and stream URLs. |
 | `internal/httpclient` | Connection pools that preserve the supplied HTTP transport settings. |
 | `internal/store` | The bbolt database that keeps sign-ins across restarts. |
 | `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy, startup alignment and the choice of quality. |
@@ -207,13 +208,13 @@ curl 'http://127.0.0.1:8899/rate?to=3M'
 ```
 
 The tests use recorded responses. To check the providers against the real
-APIs of TVP and France Télévisions, and the real sites and streams of EBC and
-TV Cultura, which CI does daily:
+APIs of TVP and France Télévisions, the real sites and streams of EBC and
+TV Cultura, and TF1's guide and LCI, which CI does daily:
 
 ```sh
 TELESFOR_LIVE=1 go test -count=1 -v -run TestLive \
   ./internal/provider/tvp ./internal/provider/ebc ./internal/provider/cultura \
-  ./internal/provider/francetv
+  ./internal/provider/francetv ./internal/provider/tf1
 ```
 
 Globoplay's needs a telesfor that has signed in, stopped for the test, and a
@@ -222,6 +223,13 @@ Brazilian connection, so CI does not run it:
 ```sh
 TELESFOR_LIVE=1 TELESFOR_DATA=<data directory> TELESFOR_GLOBO_PROXY='http://<proxy-host>:<port>' \
   go test -count=1 -v -run TestLive ./internal/provider/globo
+```
+
+TF1+'s other channels need the same, with a French connection:
+
+```sh
+TELESFOR_LIVE=1 TELESFOR_DATA=<data directory> TELESFOR_TF1_PROXY='http://<proxy-host>:<port>' \
+  go test -count=1 -v -run TestLive ./internal/provider/tf1
 ```
 
 To test the container image, which CI also does on every push:

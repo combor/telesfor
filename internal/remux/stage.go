@@ -36,11 +36,10 @@ const (
 // has got to, which makes ffmpeg write out what it has and stop, and starts
 // the next leg at the segment after. The splicer joins what the two write.
 //
-// Every address in those playlists leads back to the stage, which fetches
-// with the provider's client as the twins do, and tells the controller how
-// fast the picture comes. A segment that comes too slowly can be given up,
-// and the next leg begins with the same segment in a lower quality: see
-// segment.
+// Every address in those playlists leads back to the stage. Segments use the
+// provider's HTTP/1.1 pool; playlists and keys use its ordinary client. The
+// controller measures audio and video together. A slow video segment can be
+// given up, and the next leg begins with that segment in a lower quality.
 type stage struct {
 	relay  *relay
 	ladder *ladder
@@ -48,7 +47,7 @@ type stage struct {
 	gauge  *meter           // the stream on its way to the viewer
 	start  func(*leg) error // starts the ffmpeg that reads a leg
 	server *http.Server
-	flow   flow // how fast the picture has been coming
+	flow   flow // how fast audio and video have been coming
 
 	mu      sync.Mutex
 	legs    []*leg         // by their numbers, from 1; nil once nothing is to come of one
@@ -483,7 +482,7 @@ func (s *stage) refuse(w http.ResponseWriter, req *http.Request, name string, er
 }
 
 // get asks upstream for a file that ffmpeg asks for.
-func (s *stage) get(ctx context.Context, req *http.Request, address *url.URL) (*http.Response, error) {
+func (s *stage) get(ctx context.Context, client *http.Client, req *http.Request, address *url.URL) (*http.Response, error) {
 	fetch, err := http.NewRequestWithContext(ctx, http.MethodGet, address.String(), nil)
 	if err != nil {
 		return nil, err
@@ -491,7 +490,7 @@ func (s *stage) get(ctx context.Context, req *http.Request, address *url.URL) (*
 	if byteRange := req.Header.Get("Range"); byteRange != "" {
 		fetch.Header.Set("Range", byteRange)
 	}
-	resp, err := s.relay.direct.Do(fetch)
+	resp, err := client.Do(fetch)
 	if err != nil {
 		return nil, errors.Unwrap(err)
 	}
@@ -508,29 +507,31 @@ const (
 	// later.
 	atOnce = 20 * time.Millisecond
 
-	// tenth is what the picture's flow is counted by, and window how many of
+	// tenth is what the stream's flow is counted by, and window how many of
 	// them tell a speed: half a second.
 	tenth  = time.Second / 10
 	window = 5
 )
 
-// flow is how much of a stream's picture has come in every tenth of a second
-// of late, all of its segments together: ffmpeg may fetch two at a time, and
-// each then tells half of how fast the connection is.
+// flow counts audio and video together: concurrent segment fetches share
+// the connection, so one alone tells too little of its speed.
 type flow struct {
 	mu     sync.Mutex
 	since  time.Time // when the first of the tenths began
 	tenths []int64
+	total  int64 // all timed bytes, including those aged out of tenths
 }
 
 // add notes that n bytes have come.
 func (f *flow) add(n int, now time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.total += int64(n)
 	if f.since.IsZero() {
 		f.since = now
 	}
-	at := int(now.Sub(f.since) / tenth)
+	// A read can be delayed before it acquires this shared lock.
+	at := max(int(now.Sub(f.since)/tenth), 0)
 	if at >= 6000 { // five minutes are more than any segment takes
 		gone := at - 3000
 		f.tenths, f.since, at = f.tenths[min(gone, len(f.tenths)):], f.since.Add(time.Duration(gone)*tenth), 3000
@@ -539,40 +540,53 @@ func (f *flow) add(n int, now time.Time) {
 	f.tenths[at] += int64(n)
 }
 
-// fastest returns how fast the picture came in the fastest half second
-// between two moments, in bits a second, or 0 if they are less than that
-// apart. The tenth of a second that the second moment is in tells too
-// little, and is left out.
-func (f *flow) fastest(from, to time.Time) float64 {
+func (f *flow) bytes() int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.total
+}
+
+// fastest returns the fastest complete half second between two moments, in
+// bits per second. The boolean distinguishes no complete sample from a stall.
+// The current, incomplete tenth is excluded; trailing empty tenths count.
+func (f *flow) fastest(from, to time.Time) (float64, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.since.IsZero() {
-		return 0
+		return 0, false
 	}
 	first := max(int(from.Sub(f.since)/tenth), 0)
-	last := min(int(to.Sub(f.since)/tenth), len(f.tenths))
+	if f.since.Add(time.Duration(first) * tenth).Before(from) {
+		first++ // exclude a bucket only partly inside the requested interval
+	}
+	last := int(to.Sub(f.since) / tenth)
 	var came, most int64
 	for i := first; i < last; i++ {
-		if came += f.tenths[i]; i >= first+window {
+		if i < len(f.tenths) {
+			came += f.tenths[i]
+		}
+		if i >= first+window && i-window < len(f.tenths) {
 			came -= f.tenths[i-window]
 		}
 		if i >= first+window-1 {
 			most = max(most, came)
 		}
 	}
-	return float64(most) * 8 / (window * tenth).Seconds()
+	return transferRate(most, window*tenth), last-first >= window
 }
 
 // counted counts what is read of a body: how much has come, and how much of
 // that at once with the first of it. What comes after goes to the flow.
 type counted struct {
 	io.ReadCloser
-	flow *flow // nil for what is no picture
+	flow *flow
+	own  *flow // watched video only, for its remaining-time estimate
 
 	mu    sync.Mutex
 	got   int64
 	first int64
 	began time.Time // when the first of it came; zero before
+	base  int64     // shared flow counter when this body began
 }
 
 func (c *counted) Read(p []byte) (int, error) {
@@ -582,10 +596,14 @@ func (c *counted) Read(p []byte) (int, error) {
 		c.mu.Lock()
 		if c.got += int64(n); c.began.IsZero() {
 			c.began, c.first = now, int64(n)
+			c.base = c.flow.bytes()
 		} else if now.Sub(c.began) < atOnce {
 			c.first += int64(n)
-		} else if c.flow != nil {
+		} else {
 			c.flow.add(n, now)
+			if c.own != nil {
+				c.own.add(n, now)
+			}
 		}
 		c.mu.Unlock()
 	}
@@ -593,20 +611,29 @@ func (c *counted) Read(p []byte) (int, error) {
 }
 
 // coming tells how the body is coming: how much has come, how much of that
-// at once, for how long it has been coming, and how fast the picture came in
-// the half second just past, in bits a second.
-func (c *counted) coming() (got, first int64, flowing time.Duration, speed float64) {
+// at once, for how long it has been coming, and the recent rates of the whole
+// stream and this body. Before a complete sample exists, use bytes received
+// since the first read; a complete sample of zero still means a stall.
+func (c *counted) coming(now time.Time) (got, first int64, flowing time.Duration, speed, rate float64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.began.IsZero() {
-		return 0, 0, 0, 0
+		return 0, 0, 0, 0, 0
 	}
 	// The half second just past, and the tenth that is not over yet.
-	now, past := time.Now(), (window+1)*tenth
-	if flowing = now.Sub(c.began); flowing < past {
-		return c.got, c.first, flowing, float64(c.got-c.first) * 8 / flowing.Seconds()
+	from := now.Add(-(window + 1) * tenth)
+	if from.Before(c.began) {
+		from = c.began
 	}
-	return c.got, c.first, flowing, c.flow.fastest(now.Add(-past), now)
+	flowing = now.Sub(c.began)
+	var sampled bool
+	if speed, sampled = c.flow.fastest(from, now); !sampled {
+		speed = transferRate(c.flow.bytes()-c.base, flowing)
+	}
+	if rate, sampled = c.own.fastest(from, now); !sampled {
+		rate = transferRate(c.got-c.first, flowing)
+	}
+	return c.got, c.first, flowing, speed, rate
 }
 
 // spool takes in a body as fast as it comes, whatever ffmpeg does with it,
@@ -741,7 +768,7 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 		defer keep()
 	}
 	asked := time.Now()
-	resp, err := s.get(ctx, req, wanted.uri)
+	resp, err := s.get(ctx, s.relay.segments, req, wanted.uri)
 	if err != nil {
 		if whole && l.flying.Err() != nil {
 			http.NotFound(w, req) // given up
@@ -750,9 +777,9 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 		s.refuse(w, req, file(wanted.uri), err)
 		return
 	}
-	body := &counted{ReadCloser: resp.Body}
-	if video {
-		body.flow = &s.flow
+	body := &counted{ReadCloser: resp.Body, flow: &s.flow}
+	if watched {
+		body.own = &flow{}
 	}
 	resp.Body = body
 
@@ -805,7 +832,8 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 	}
 	how := arrival{size: size, first: body.first, wait: came.Sub(asked), length: wanted.length, newest: newest}
 	if !body.began.IsZero() {
-		how.wait, how.flow, how.fastest = body.began.Sub(asked), came.Sub(body.began), s.flow.fastest(body.began, came)
+		how.wait, how.flow = body.began.Sub(asked), came.Sub(body.began)
+		how.fastest, _ = s.flow.fastest(body.began, came)
 	}
 	if to, why, ok := s.ctl.fetched(l.quality, how); ok {
 		s.change(l, to, why)
@@ -830,8 +858,8 @@ func (s *stage) watch(l *leg, body *counted, of int64, asked time.Time, length t
 		if waits {
 			continue
 		}
-		got, first, flowing, speed := body.coming()
-		how := coming{got: got - first, of: of - first, speed: speed, flow: flowing, took: time.Since(asked), length: length}
+		got, first, flowing, speed, rate := body.coming(time.Now())
+		how := coming{got: got - first, of: of - first, speed: speed, rate: rate, flow: flowing, took: time.Since(asked), length: length}
 		if !doubted.IsZero() {
 			how.doubted = time.Since(doubted)
 		}
@@ -862,7 +890,7 @@ func (s *stage) key(w http.ResponseWriter, req *http.Request) {
 		http.NotFound(w, req)
 		return
 	}
-	resp, err := s.get(req.Context(), req, address)
+	resp, err := s.get(req.Context(), s.relay.direct, req, address)
 	if err != nil {
 		s.refuse(w, req, file(address), err)
 		return

@@ -164,7 +164,7 @@ func (w *world) fetch(v *viewer, fetching int) {
 	if v.got < v.size {
 		// stage watches a segment that it holds whole: any but of the lowest quality.
 		if v.ctl != nil && v.quality > 0 && took%(100*time.Millisecond) == 0 {
-			how := coming{got: int64(v.got / 8), of: int64(v.size / 8), speed: w.speed(w.at) / float64(fetching), flow: flow, took: took, length: w.segment}
+			how := coming{got: int64(v.got / 8), of: int64(v.size / 8), speed: w.speed(w.at) / float64(fetching), rate: w.speed(w.at) / float64(fetching), flow: flow, took: took, length: w.segment}
 			if v.doubted >= 0 {
 				how.doubted = w.at - v.doubted
 			}
@@ -484,6 +484,21 @@ func TestControllerTriesAQualityAgain(t *testing.T) {
 	}
 }
 
+// Parallel audio must not make a video segment look closer to completion.
+func TestProgressUsesSegmentRate(t *testing.T) {
+	r := &route{streams: map[*controller]float64{}}
+	c := newController("slow video", franceLadder, r, func() (time.Duration, time.Duration, bool) { return 0, 0, true })
+	quality := c.start()
+	c.given, c.full, c.delivered, c.hold = 1, 10*time.Second, 5*time.Second, 0
+	to, _, _, change := c.progress(quality, coming{
+		got: 250000, of: 250000 + 3<<20, speed: 4e6, rate: 2e6,
+		flow: time.Second, took: time.Second, doubted: time.Second, length: 8 * time.Second,
+	})
+	if !change || c.ladder[to].height != 540 {
+		t.Fatalf("selected %d (change %t), want 540p before the reserve runs out", to, change)
+	}
+}
+
 // The speed a segment tells of is that of what came after its first bytes:
 // those had been waiting on the way.
 func TestArrivalSpeed(t *testing.T) {
@@ -494,6 +509,7 @@ func TestArrivalSpeed(t *testing.T) {
 		speed float64 // in bits a second; 0 if the segment tells none
 	}{
 		{"a segment that takes its time", arrival{size: 1000 * kB, first: 16 * kB, flow: 2 * time.Second, fastest: 6e6}, 6e6},
+		{"the same body after a long setup wait", arrival{size: 1000 * kB, first: 16 * kB, wait: 10 * time.Second, flow: 2 * time.Second, fastest: 6e6}, 6e6},
 		{"a small one of which half came at once", arrival{size: 34 * kB, first: 16 * kB, flow: 48 * time.Millisecond}, 18 * kB * 8 / 0.05},
 		{"one that came all at once", arrival{size: 60 * kB, first: 32 * kB, flow: time.Millisecond}, 28 * kB * 8 / 0.05},
 		{"a small one that came all at once", arrival{size: 20 * kB, first: 20 * kB}, 20 * kB * 8 / 0.05},

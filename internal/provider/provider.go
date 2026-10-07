@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/combor/telesfor/internal/httpclient"
 )
 
 // Provider is a source of live TV channels, such as a broadcaster's streaming
@@ -80,7 +82,7 @@ func Client(proxy string) (*http.Client, error) {
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
-	return &http.Client{Transport: transport, Timeout: time.Minute}, nil
+	return &http.Client{Transport: httpclient.NewTransport(transport), Timeout: time.Minute}, nil
 }
 
 // Account is a Provider that streams to an account. The user signs in on the

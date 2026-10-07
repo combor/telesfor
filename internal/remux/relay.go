@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/combor/telesfor/internal/httpclient"
 )
 
 // relay lets ffmpeg read one stream through the provider's HTTP client.
@@ -32,10 +34,12 @@ import (
 // A stream that comes in more than one quality is not read through the twins:
 // see stage.
 type relay struct {
-	client *http.Client // fetches what ffmpeg asks a twin for, and leaves redirects to ffmpeg
-	direct *http.Client // fetches the rest, and follows them
-	late   atomic.Int64 // how late the stream stamps its frames to be decoded: see repairDTS
-	short  atomic.Bool  // the stream's playlist holds fewer segments than headStart: see reserve
+	client   *http.Client // fetches what ffmpeg asks a twin for, and leaves redirects to ffmpeg
+	direct   *http.Client // fetches playlists, keys and init sections, and follows redirects
+	segments *http.Client // fetches segments over HTTP/1.1
+	release  func()       // closes a segment pool owned by this relay
+	late     atomic.Int64 // how late the stream stamps its frames to be decoded: see repairDTS
+	short    atomic.Bool  // the stream's playlist holds fewer segments than headStart: see reserve
 
 	mu     sync.Mutex
 	twins  map[string]*http.Server // by the server they stand in for, as scheme://host
@@ -60,14 +64,18 @@ func openRelay(manifest string, client *http.Client) (r *relay, local string, er
 	if client == nil {
 		client = http.DefaultClient
 	}
+	segments := *client
+	segmentTransport, release := httpclient.SegmentTransport(client.Transport)
+	segments.Transport = segmentTransport
 	// ffmpeg has to see the redirects itself: they change what the relative
 	// URIs in a playlist refer to.
-	noFollow := *client
+	noFollow := segments
 	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-	r = &relay{client: &noFollow, direct: client, twins: map[string]*http.Server{}}
+	r = &relay{client: &noFollow, direct: client, segments: &segments, release: release, twins: map[string]*http.Server{}}
 	local, err = r.local(upstream)
 	if err != nil {
+		release()
 		return nil, "", err
 	}
 	return r, local, nil
@@ -239,7 +247,7 @@ func (r *relay) pass(w io.Writer, resp *http.Response) (size int64, err error) {
 	return size, err
 }
 
-// close stops the relay's twins.
+// close stops the relay's twins and releases its private segment pool.
 func (r *relay) close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -247,4 +255,5 @@ func (r *relay) close() {
 	for _, twin := range r.twins {
 		twin.Close()
 	}
+	r.release()
 }

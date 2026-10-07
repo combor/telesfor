@@ -206,32 +206,36 @@ type arrival struct {
 	first   int64         // how much of that came at once, with the first of it
 	wait    time.Duration // from asking for it to the first of it
 	flow    time.Duration // from the first of it to the last
-	fastest float64       // how fast it came in its fastest half second, in bits a second; 0 for one that took less
+	fastest float64       // combined audio/video throughput during its fastest half second; 0 without a complete sample
 	length  time.Duration // how long the segment plays
 	newest  bool          // the stream has none after it yet
 }
 
-// speed tells how fast the connection was while a segment came: as fast as
-// the segment came in its fastest half second. A transfer starts slowly on a
-// connection that has been idle, the slower the further away the provider is,
+// speed estimates connection capacity from combined audio/video throughput
+// while the segment arrived. A transfer starts slowly on a connection that
+// has been idle, the slower the further away the provider is,
 // and a provider may hand a segment out slower than the connection carries
 // it: EBC's newest comes in three seconds, where its older ones take a quarter
 // of one. So the whole of a transfer tells too little of the connection.
 //
-// A segment that came in less than half a second tells by what came after the
-// first of it, over the time that took: what came at once had been waiting on
-// the way. One too small to time tells nothing, unless all of it came at
+// Without a complete shared sample, use the segment's own body rate after
+// its initial burst. Bytes that arrived at once had been waiting on the
+// way. One too small to time tells nothing, unless all of it came at
 // once: the connection is then as fast as that at least.
 func (a arrival) speed() (float64, bool) {
 	switch rest := a.size - a.first; {
 	case a.fastest > 0:
 		return a.fastest, true
 	case rest >= minSample:
-		return float64(rest) * 8 / max(a.flow, minFlow).Seconds(), true
+		return transferRate(rest, a.flow), true
 	case a.size >= minSample && a.flow < minFlow:
-		return float64(a.size) * 8 / minFlow.Seconds(), true
+		return transferRate(a.size, a.flow), true
 	}
 	return 0, false
+}
+
+func transferRate(bytes int64, elapsed time.Duration) float64 {
+	return float64(bytes) * 8 / max(elapsed, minFlow).Seconds()
 }
 
 // controller decides which quality of a stream to play, so that the viewer's
@@ -414,7 +418,8 @@ func (c *controller) reserve() time.Duration {
 // coming is how a segment is coming, while ffmpeg waits for it.
 type coming struct {
 	got, of int64         // how much of how much has come, not counting what came at once with the first of it
-	speed   float64       // how fast it is coming now, in bits a second
+	speed   float64       // combined audio/video throughput, in bits a second
+	rate    float64       // this segment's delivery rate, in bits a second
 	flow    time.Duration // for how long it has been coming
 	took    time.Duration // since when it was asked for
 	doubted time.Duration // for how long it has looked like one to give up
@@ -450,13 +455,13 @@ func (c *controller) progress(quality int, s coming) (to int, why string, doubt,
 		if c.takes(quality) <= c.budget(s.speed) {
 			return 0, "", false, false
 		}
-		why = "its first segment came at " + megabits(s.speed)
+		why = "the first probe measured " + megabits(s.speed)
 	} else {
 		if c.full == 0 {
 			return 0, "", false, false
 		}
 		reserve := c.reserve()
-		left := time.Duration(float64(s.of-s.got) * 8 / max(s.speed, 1) * float64(time.Second))
+		left := time.Duration(float64(s.of-s.got) * 8 / max(s.rate, 1) * float64(time.Second))
 		// As it would be judged if it came now, and counted for the reserve.
 		c.recent = append(c.recent, fetch{s.length, s.took})
 		slow := s.took > s.length && c.tooSlow(reserve+s.length)
@@ -470,7 +475,7 @@ func (c *controller) progress(quality int, s coming) (to int, why string, doubt,
 			why = "its segments take longer to come than to play"
 		case s.took+left > s.length && left > reserve-handover:
 			patience = min(reserve/10, 3*time.Second)
-			why = "a segment was coming at " + megabits(s.speed) + ", too slowly to wait for"
+			why = "a segment was coming at " + megabits(s.rate) + ", too slowly to wait for"
 		default:
 			return 0, "", false, false
 		}

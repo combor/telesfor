@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/combor/telesfor/internal/httpclient"
 )
 
 // What the stream of a station is made of.
@@ -30,8 +32,9 @@ const (
 // starts with a few segments listed and lists another every time one's length
 // has passed, here until the stream ends.
 type station struct {
-	dir   string              // where ffmpeg wrote the stream
-	lists map[string][]string // each playlist in pieces: what leads it, and then every segment's lines
+	dir      string                  // where ffmpeg wrote the stream
+	lists    map[string][]string     // each playlist in pieces: what leads it, and then every segment's lines
+	segments map[string]stationMedia // metadata by request path
 
 	// trouble, if set, may answer for a segment in the station's place.
 	trouble func(w http.ResponseWriter, r *http.Request, quality string, seq int, body []byte) bool
@@ -39,6 +42,11 @@ type station struct {
 
 	start sync.Once
 	began time.Time // when the stream was first asked for
+}
+
+type stationMedia struct {
+	quality string
+	seq     int
 }
 
 // newStation has ffmpeg make a stream with segments of the given kind, mpegts
@@ -52,28 +60,34 @@ func newStation(t *testing.T, ffmpeg, kind string) *station {
 		"-f", "lavfi", "-i", "testsrc=duration=" + length + ":size=320x240:rate=20,noise=alls=40:allf=t",
 		"-f", "lavfi", "-i", "sine=duration=" + length,
 	}
-	for _, output := range [][]string{
-		{"high", "-map", "0:v", "-c:v", "mpeg2video", "-g", "10", "-b:v", "2M"},
-		{"low", "-map", "0:v", "-vf", "scale=160:120", "-c:v", "mpeg2video", "-g", "10", "-b:v", "800k"},
-		{"sound", "-map", "1:a", "-c:a", "mp2"},
-	} {
-		name := output[0]
-		args = append(args, output[1:]...)
+	tracks := []struct {
+		name string
+		args []string
+	}{
+		{"high", []string{"-map", "0:v", "-c:v", "mpeg2video", "-g", "10", "-b:v", "2M"}},
+		{"low", []string{"-map", "0:v", "-vf", "scale=160:120", "-c:v", "mpeg2video", "-g", "10", "-b:v", "800k"}},
+		{"sound", []string{"-map", "1:a", "-c:a", "mp2"}},
+	}
+	for i, track := range tracks {
+		// Neutral file names make the test independent of quality names.
+		file := "media" + strconv.Itoa(i)
+		args = append(args, track.args...)
 		args = append(args, "-f", "hls", "-hls_time", "0.5", "-hls_playlist_type", "vod")
 		if kind == "fmp4" {
-			args = append(args, "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", name+"init.mp4",
-				"-hls_segment_filename", filepath.Join(dir, name+"%d.m4s"))
+			args = append(args, "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", file+"init.mp4",
+				"-hls_segment_filename", filepath.Join(dir, file+"-%d.m4s"))
 		} else {
-			args = append(args, "-hls_segment_filename", filepath.Join(dir, name+"%d.ts"))
+			args = append(args, "-hls_segment_filename", filepath.Join(dir, file+"-%d.ts"))
 		}
-		args = append(args, filepath.Join(dir, name+".m3u8"))
+		args = append(args, filepath.Join(dir, track.name+".m3u8"))
 	}
 	if out, err := exec.Command(ffmpeg, args...).CombinedOutput(); err != nil {
 		t.Skipf("ffmpeg cannot generate a test stream: %v\n%s", err, out)
 	}
 
-	s := &station{dir: dir, lists: map[string][]string{}}
-	for _, name := range []string{"high", "low", "sound"} {
+	s := &station{dir: dir, lists: map[string][]string{}, segments: map[string]stationMedia{}}
+	for _, track := range tracks {
+		name := track.name
 		list, err := os.ReadFile(filepath.Join(dir, name+".m3u8"))
 		if err != nil {
 			t.Fatal(err)
@@ -82,7 +96,14 @@ func newStation(t *testing.T, ffmpeg, kind string) *station {
 		lead = strings.ReplaceAll(lead, "#EXT-X-PLAYLIST-TYPE:VOD\n", "")
 		s.lists[name] = []string{lead}
 		for segment := range strings.SplitSeq(segments, "#EXTINF") {
-			s.lists[name] = append(s.lists[name], "#EXTINF"+segment)
+			entry := "#EXTINF" + segment
+			seq := len(s.lists[name]) - 1
+			s.lists[name] = append(s.lists[name], entry)
+			for line := range strings.Lines(entry) {
+				if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+					s.segments["/"+line] = stationMedia{quality: name, seq: seq}
+				}
+			}
 		}
 		if name != "sound" && len(s.lists[name]) != 1+stationSegments {
 			t.Fatalf("ffmpeg cut the %s quality into %d segments, want %d", name, len(s.lists[name])-1, stationSegments)
@@ -117,9 +138,8 @@ func (s *station) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		quality := strings.TrimRight(strings.TrimSuffix(strings.TrimSuffix(name, ".ts"), ".m4s"), "0123456789")
-		seq, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(name, quality), ".ts"), ".m4s"))
-		if err == nil && s.trouble != nil && s.trouble(w, r, quality, seq, body) {
+		segment, known := s.segments[r.URL.Path]
+		if known && s.trouble != nil && s.trouble(w, r, segment.quality, segment.seq, body) {
 			return
 		}
 		http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(body))
@@ -378,8 +398,22 @@ func TestCopySwitches(t *testing.T) {
 				t.Parallel()
 				s := newStation(t, ffmpeg, kind)
 				s.trouble, s.missing = test.trouble, test.missing
-				upstream := httptest.NewServer(s)
+				upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					want := 2
+					if _, segment := s.segments[req.URL.Path]; segment {
+						want = 1
+					}
+					if req.ProtoMajor != want {
+						t.Errorf("%s used %s, want HTTP/%d", req.URL.Path, req.Proto, want)
+					}
+					s.ServeHTTP(w, req)
+				}))
+				upstream.EnableHTTP2 = true
+				upstream.StartTLS()
 				defer upstream.Close()
+				client := *upstream.Client()
+				client.Transport = httpclient.NewTransport(client.Transport.(*http.Transport))
+				defer client.CloseIdleConnections()
 
 				remuxer, err := New()
 				if err != nil {
@@ -392,7 +426,7 @@ func TestCopySwitches(t *testing.T) {
 					remuxer.route("test").learn(test.known, time.Now())
 				}
 				var out bytes.Buffer
-				stream := Stream{Manifest: upstream.URL + "/master.m3u8", Client: upstream.Client(), Name: test.name, Route: "test"}
+				stream := Stream{Manifest: upstream.URL + "/master.m3u8", Client: &client, Name: test.name, Route: "test"}
 				if err := remuxer.Copy(t.Context(), &out, stream); err != nil {
 					t.Fatal(err)
 				}
@@ -451,7 +485,95 @@ func TestCopyEndsWithItsViewer(t *testing.T) {
 	}
 }
 
-// How fast the picture came is told by its fastest half second.
+// Parallel audio must not make the first video probe mistake its share of
+// the connection for the whole connection's speed.
+func TestProbeBeforeFiveCompleteBuckets(t *testing.T) {
+	start := time.Unix(100, 0)
+	for _, test := range []struct {
+		first, probe time.Duration
+	}{
+		{100 * time.Millisecond, 501 * time.Millisecond},
+		{120 * time.Millisecond, 600 * time.Millisecond},
+	} {
+		f := &flow{}
+		for i := range 5 {
+			at := start.Add(test.first + time.Duration(i)*tenth)
+			f.add(25000, at) // picture
+			f.add(25000, at) // sound
+		}
+		body := &counted{flow: f, own: &flow{}, began: start, first: 4096, got: 4096 + 125000}
+		got, first, elapsed, speed, rate := body.coming(start.Add(test.probe))
+		if speed < 3e6 {
+			t.Errorf("at %v measured %.2f Mbps, losing the audio contribution", test.probe, speed/1e6)
+		}
+		r := &route{streams: map[*controller]float64{}}
+		c := newController("probe", franceLadder, r, func() (time.Duration, time.Duration, bool) { return 0, 0, false })
+		to, _, _, change := c.progress(c.start(), coming{got: got - first, of: 5 << 20, flow: elapsed, took: elapsed, speed: speed, rate: rate, length: 7680 * time.Millisecond})
+		if !change || c.ladder[to].height < 540 {
+			t.Errorf("at %v selected quality %d, want at least 540p", test.probe, to)
+		}
+	}
+}
+
+func TestProbeCountsBothTracks(t *testing.T) {
+	start := time.Unix(100, 0)
+	f := &flow{}
+	for i := range 8 {
+		at := start.Add(time.Duration(i) * tenth)
+		f.add(12000, at) // video
+		f.add(6750, at)  // audio: together 1.5 Mbps
+	}
+	for _, elapsed := range []time.Duration{550 * time.Millisecond, 800 * time.Millisecond} {
+		now := start.Add(elapsed)
+		body := &counted{flow: f, own: &flow{}, began: start, first: 4096, got: 4096 + 64<<10}
+		got, first, flowing, speed, rate := body.coming(now)
+		if speed != 1.5e6 {
+			t.Fatalf("at %v measured %.0f bps, want audio and video together at 1.5 Mbps", elapsed, speed)
+		}
+		r := &route{streams: map[*controller]float64{}}
+		c := newController("probe", franceLadder, r, func() (time.Duration, time.Duration, bool) { return 0, 0, false })
+		quality := c.start()
+		to, _, _, change := c.progress(quality, coming{got: got - first, of: 5 << 20, flow: flowing, took: elapsed, speed: speed, rate: rate, length: 7680 * time.Millisecond})
+		if !change || c.ladder[to].height != 216 {
+			t.Errorf("at %v selected quality %d (change %t), want 216p", elapsed, to, change)
+		}
+	}
+	body := &counted{flow: f, own: &flow{}, began: start, first: 4096, got: 4096 + 64<<10}
+	if _, _, _, speed, _ := body.coming(start.Add(2 * time.Second)); speed != 0 {
+		t.Errorf("a stalled stream measured %.0f bps, want zero", speed)
+	}
+}
+
+func TestProbePartialFirstBucket(t *testing.T) {
+	start := time.Unix(1000, 0)
+	f := &flow{}
+	f.add(1, start) // a previous segment established the bucket alignment
+	began := start.Add(90 * time.Millisecond)
+	for i := 1; i <= 5; i++ {
+		f.add(50000, began.Add(time.Duration(i)*tenth))
+	}
+	body := &counted{flow: f, own: &flow{}, began: began, base: 1, first: 4096, got: 4096 + 250000}
+	if _, _, _, speed, _ := body.coming(began.Add(500 * time.Millisecond)); speed != 4e6 {
+		t.Fatalf("partially covered first bucket measured %.2f Mbps, want 4 Mbps", speed/1e6)
+	}
+}
+
+// Timestamps can arrive out of order when another read gets the lock first.
+func TestFlowOutOfOrder(t *testing.T) {
+	start := time.Unix(1000, 0)
+	for _, late := range []time.Duration{99 * time.Millisecond, 100 * time.Millisecond, 250 * time.Millisecond} {
+		t.Run(late.String(), func(t *testing.T) {
+			f := &flow{}
+			f.add(100, start)
+			f.add(50, start.Add(-late))
+			if got, sampled := f.fastest(start, start.Add(500*time.Millisecond)); !sampled || got != 150*8/0.5 {
+				t.Errorf("late sample: %.0f bps, sampled %t; want all 150 bytes counted", got, sampled)
+			}
+		})
+	}
+}
+
+// The connection's speed is told by its fastest half second.
 func TestFlowFastest(t *testing.T) {
 	since := time.Unix(1000, 0)
 	for _, test := range []struct {
@@ -468,7 +590,7 @@ func TestFlowFastest(t *testing.T) {
 		for i, n := range test.tenths {
 			f.add(int(n), since.Add(time.Duration(i)*tenth))
 		}
-		if got := f.fastest(since, since.Add(time.Duration(len(test.tenths))*tenth)); got != test.want {
+		if got, _ := f.fastest(since, since.Add(time.Duration(len(test.tenths))*tenth)); got != test.want {
 			t.Errorf("%s: fastest() = %.0f, want %.0f", test.name, got, test.want)
 		}
 	}
@@ -477,8 +599,8 @@ func TestFlowFastest(t *testing.T) {
 	for i, n := range []int64{900, 900, 900, 900, 900, 100, 100, 100, 100, 100, 100} {
 		f.add(int(n), since.Add(time.Duration(i)*tenth))
 	}
-	if got, want := f.fastest(since.Add(500*time.Millisecond), since.Add(1100*time.Millisecond)), 500*8/0.5; got != want {
-		t.Errorf("after its first half second: fastest() = %.0f, want %.0f", got, want)
+	if got, _ := f.fastest(since.Add(500*time.Millisecond), since.Add(1100*time.Millisecond)); got != 500*8/0.5 {
+		t.Errorf("after its first half second: fastest() = %.0f, want %.0f", got, 500*8/0.5)
 	}
 	// What is long past is forgotten, a stream that stood still for a while
 	// included.
@@ -486,7 +608,7 @@ func TestFlowFastest(t *testing.T) {
 	for i := range 6 {
 		f.add(200, later.Add(time.Duration(i)*tenth))
 	}
-	if got, want := f.fastest(later, later.Add(600*time.Millisecond)), 1000*8/0.5; got != want || len(f.tenths) > 6000 {
-		t.Errorf("an hour later: fastest() = %.0f with %d tenths of a second kept, want %.0f and no more than ten minutes", got, len(f.tenths), want)
+	if got, _ := f.fastest(later, later.Add(600*time.Millisecond)); got != 1000*8/0.5 || len(f.tenths) > 6000 {
+		t.Errorf("an hour later: fastest() = %.0f with %d tenths of a second kept, want %.0f and no more than ten minutes", got, len(f.tenths), 1000*8/0.5)
 	}
 }

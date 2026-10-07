@@ -22,6 +22,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/combor/telesfor/internal/httpclient"
 	"github.com/combor/telesfor/internal/provider"
 )
 
@@ -715,6 +716,26 @@ type session struct {
 }
 
 func (s *session) RoundTrip(req *http.Request) (*http.Response, error) {
+	return s.roundTrip(req, s.RoundTripper)
+}
+
+// SegmentTransport keeps token renewal shared with playlists while sending
+// segment requests over the separate connection pool.
+func (s *session) SegmentTransport() (http.RoundTripper, func()) {
+	transport, release := httpclient.SegmentTransport(s.RoundTripper)
+	return &segmentSession{session: s, transport: transport}, release
+}
+
+type segmentSession struct {
+	session   *session
+	transport http.RoundTripper
+}
+
+func (s *segmentSession) RoundTrip(req *http.Request) (*http.Response, error) {
+	return s.session.roundTrip(req, s.transport)
+}
+
+func (s *session) roundTrip(req *http.Request, transport http.RoundTripper) (*http.Response, error) {
 	if s.master != nil && req.URL.Host == s.master.Host && req.URL.Path == s.master.Path {
 		return &http.Response{
 			Status:        "200 OK",
@@ -741,7 +762,7 @@ func (s *session) RoundTrip(req *http.Request) (*http.Response, error) {
 		if file, ok := strings.CutPrefix(out.URL.Path, s.first+"/"); ok && s.first != "" {
 			out.URL.Path, out.URL.RawPath = pass+"/"+file, ""
 		}
-		resp, err := s.RoundTripper.RoundTrip(out)
+		resp, err := transport.RoundTrip(out)
 		if resp != nil {
 			// The answer is to what was asked. What a playlist lists is
 			// then asked for the same way, with the pass that is renewed.

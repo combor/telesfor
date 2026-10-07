@@ -31,6 +31,7 @@ flowchart LR
 | `internal/provider/ebc` | EBC's channels and streams, and TV Brasil's guide. |
 | `internal/provider/cultura` | TV Cultura's channels, streams and guide. |
 | `internal/provider/francetv` | France Télévisions' channels, guide and stream URLs. |
+| `internal/httpclient` | Connection pools that preserve the supplied HTTP transport settings. |
 | `internal/store` | The bbolt database that keeps sign-ins across restarts. |
 | `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy, startup alignment and the choice of quality. |
 | `internal/slowproxy` | A throttling proxy for trying telesfor on a slow connection. Not in the binary. |
@@ -51,6 +52,13 @@ Each upstream server gets a loopback counterpart. ffmpeg reads from that
 local address, and the relay fetches the same path from the real server.
 Each provider can have its own proxy, headers or cookies without ffmpeg
 needing to know about them.
+
+Audio and video segments use HTTP/1.1 so an abandoned fetch can close its
+connection without holding up other responses on a shared HTTP/2 connection.
+Completed fetches reuse connections. Adaptive playback keeps playlists, keys
+and initialization sections on the provider's ordinary transport. The
+passthrough relay uses HTTP/1.1 for all ffmpeg fetches, whose roles it does
+not know in advance.
 
 ### Why trim the start?
 
@@ -97,12 +105,14 @@ so Plex sees one stream whose picture changes size.
 
 Two measures decide:
 
-- **Speed.** How fast each video segment arrived in its fastest half second,
-  in a quick and a slow moving average, of which the lower counts. The whole
-  transfer tells too little: it starts slowly on a connection that was idle,
-  and EBC hands out its newest segment in three seconds where older ones
-  take a quarter of one. The speed is remembered per provider for ten
-  minutes, and what other streams of the provider take is taken off.
+- **Speed.** Combined audio and video throughput during each video segment's
+  fastest half second, in a quick and a slow moving average, of which the
+  lower counts. The whole transfer tells too little: it starts slowly on a
+  connection that was idle, and EBC hands out its newest segment in three
+  seconds where older ones take a quarter of one. The speed is remembered
+  per provider for ten minutes, and what other streams of the provider take
+  is taken off.
+  A segment's remaining download time is estimated from its own rate.
 - **Reserve.** An estimate of what the player has in hand: the stream sent,
   less the time since it went on air, less the five seconds Plex holds back.
 

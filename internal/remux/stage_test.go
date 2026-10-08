@@ -2,10 +2,12 @@ package remux
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -233,64 +235,6 @@ func watch(t *testing.T, ffprobe string, stream []byte) watched {
 	return w
 }
 
-// The picture and the sound of a stream's first leg begin at the same time,
-// though their playlists are read one after the other and a segment may be
-// listed in between: ffmpeg does without a picture that begins long after the
-// sound.
-func TestFirstLegBeginsTogether(t *testing.T) {
-	eight := slices.Repeat([]string{"2"}, 8)
-	for _, test := range []struct {
-		name         string
-		video, sound playlist
-		soundFirst   bool
-		want         [2]int64 // where the picture and the sound begin
-	}{
-		{"the sound has a segment more", listOf(t, 100, "21:00:00Z", eight...), listOf(t, 100, "21:00:00Z", append(eight, "2")...), false, [2]int64{102, 102}},
-		{"read the other way round", listOf(t, 100, "21:00:00Z", eight...), listOf(t, 100, "21:00:00Z", append(eight, "2")...), true, [2]int64{103, 103}},
-		{"numbered apart", listOf(t, 100, "21:00:00Z", eight...), listOf(t, 500, "21:00:00Z", append(eight, "2")...), false, [2]int64{102, 502}},
-		{"without times: as far from the newest", listOf(t, 100, "", eight...), listOf(t, 500, "", append(eight, "2")...), false, [2]int64{102, 503}},
-	} {
-		s := &stage{relay: &relay{}}
-		l := &leg{}
-		l.video.from, l.sound.from = -1, -1
-		for _, video := range []bool{!test.soundFirst, test.soundFirst} {
-			track, list := &l.sound, test.sound
-			if video {
-				track, list = &l.video, test.video
-			}
-			if !s.place(l, track, list, video) {
-				t.Fatalf("%s: the leg could not be placed", test.name)
-			}
-			track.list = list
-		}
-		if got := [2]int64{l.video.from, l.sound.from}; got != test.want {
-			t.Errorf("%s: picture and sound begin at %v, want %v", test.name, got, test.want)
-		}
-	}
-}
-
-// The picture and the sound of a leg end at the same time, though ffmpeg has
-// asked for a segment less of the sound: the leg after it begins with both
-// there.
-func TestLegEndsTogether(t *testing.T) {
-	eight := slices.Repeat([]string{"2"}, 8)
-	for _, test := range []struct {
-		name         string
-		video, sound playlist
-	}{
-		{"by the clock", listOf(t, 100, "21:00:00Z", eight...), listOf(t, 500, "21:00:00Z", eight...)},
-		{"without times: as many segments of each", listOf(t, 100, "", eight...), listOf(t, 500, "", eight...)},
-	} {
-		l := &leg{}
-		l.video = track{list: test.video, from: 102, started: 104}
-		l.sound = track{list: test.sound, from: 502, started: 503}
-		l.cut()
-		if got, want := [2]int64{l.video.until, l.sound.until}, [2]int64{105, 505}; got != want {
-			t.Errorf("%s: picture and sound end before %v, want %v", test.name, got, want)
-		}
-	}
-}
-
 // TestCopySwitches plays a generated live stream that comes in two qualities
 // end to end, with a provider that makes the quality change on the way.
 func TestCopySwitches(t *testing.T) {
@@ -485,130 +429,182 @@ func TestCopyEndsWithItsViewer(t *testing.T) {
 	}
 }
 
-// Parallel audio must not make the first video probe mistake its share of
-// the connection for the whole connection's speed.
-func TestProbeBeforeFiveCompleteBuckets(t *testing.T) {
-	start := time.Unix(100, 0)
+// Read audio through the stage rather than seeding the flow counter. This
+// must fail if audio is disconnected from the shared speed measurement.
+func TestAudioContributesToFlow(t *testing.T) {
+	const chunk = 32 << 10
+	rest := make(chan struct{})
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Length", "65536")
+		w.Write(make([]byte, chunk))
+		w.(http.Flusher).Flush()
+		select {
+		case <-rest:
+		case <-req.Context().Done():
+			return
+		}
+		w.Write(make([]byte, chunk))
+	}))
+	defer origin.Close()
+	relay, _, err := openRelay(origin.URL+"/playlist", origin.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relay.close()
+	defer relay.segments.CloseIdleConnections()
+	now := time.Now()
+	ctl := testController(&route{streams: map[*controller]float64{}}, &now)
+	st, err := relay.perform(tvpLadder, ctl, newMeter(io.Discard), func(*leg) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.close()
+	l, err := st.begin(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	address, _ := url.Parse(origin.URL + "/audio")
+	l.sound.list = playlist{segments: []entry{{seq: 0, uri: address, length: time.Second}}}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+st.server.Addr+"/1/a/0/asset", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.CopyN(io.Discard, resp.Body, chunk); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * atOnce) // put the remaining bytes beyond the initial read burst
+	close(rest)
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	st.flow.mu.Lock()
+	defer st.flow.mu.Unlock()
+	var counted int64
+	for _, n := range st.flow.tenths {
+		counted += n
+	}
+	if counted < chunk {
+		t.Fatalf("counted %d audio bytes, want at least %d", counted, chunk)
+	}
+}
+
+// A segment that is not watched, of the sound or of the lowest quality, comes
+// over HTTP/1.1 too, and stops coming once the viewer leaves or the leg is
+// cut before it. Other requests still go over HTTP/2.
+func TestUnwatchedSegmentCancellation(t *testing.T) {
 	for _, test := range []struct {
-		first, probe time.Duration
+		name, track string
+		cut         bool
 	}{
-		{100 * time.Millisecond, 501 * time.Millisecond},
-		{120 * time.Millisecond, 600 * time.Millisecond},
+		{"audio, the viewer leaves", "a", false},
+		{"audio, the leg is cut before the headers come", "a", true},
+		{"video of the lowest quality, the viewer leaves", "v", false},
+		{"video of the lowest quality, the leg is cut before the headers come", "v", true},
 	} {
-		f := &flow{}
-		for i := range 5 {
-			at := start.Add(test.first + time.Duration(i)*tenth)
-			f.add(25000, at) // picture
-			f.add(25000, at) // sound
-		}
-		body := &counted{flow: f, own: &flow{}, began: start, first: 4096, got: 4096 + 125000}
-		got, first, elapsed, speed, rate := body.coming(start.Add(test.probe))
-		if speed < 3e6 {
-			t.Errorf("at %v measured %.2f Mbps, losing the audio contribution", test.probe, speed/1e6)
-		}
-		r := &route{streams: map[*controller]float64{}}
-		c := newController("probe", franceLadder, r, func() (time.Duration, time.Duration, bool) { return 0, 0, false })
-		to, _, _, change := c.progress(c.start(), coming{got: got - first, of: 5 << 20, flow: elapsed, took: elapsed, speed: speed, rate: rate, length: 7680 * time.Millisecond})
-		if !change || c.ladder[to].height < 540 {
-			t.Errorf("at %v selected quality %d, want at least 540p", test.probe, to)
-		}
-	}
-}
+		t.Run(test.name, func(t *testing.T) {
+			asked, release, canceled := make(chan int, 1), make(chan struct{}), make(chan struct{})
+			origin := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.URL.Path == "/next" {
+					io.WriteString(w, "ok")
+					return
+				}
+				asked <- req.ProtoMajor
+				select {
+				case <-release:
+				case <-req.Context().Done():
+					return
+				}
+				w.Header().Set("Content-Length", "1000000")
+				w.Write(make([]byte, 32<<10))
+				w.(http.Flusher).Flush()
+				<-req.Context().Done()
+				close(canceled)
+			}))
+			origin.EnableHTTP2 = true
+			origin.StartTLS()
+			defer origin.Close()
+			client := &http.Client{Transport: httpclient.NewTransport(origin.Client().Transport.(*http.Transport))}
+			defer client.CloseIdleConnections()
+			relay, _, err := openRelay(origin.URL+"/playlist", client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer relay.close()
+			now := time.Now()
+			ctl := testController(&route{streams: map[*controller]float64{}}, &now)
+			st, err := relay.perform(tvpLadder, ctl, newMeter(io.Discard), func(*leg) error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.close()
+			l, err := st.begin(0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			address, _ := url.Parse(origin.URL + "/asset")
+			list := playlist{segments: []entry{{seq: 0, uri: address, length: time.Second}}}
+			l.video.list, l.sound.list = list, list
 
-func TestProbeCountsBothTracks(t *testing.T) {
-	start := time.Unix(100, 0)
-	f := &flow{}
-	for i := range 8 {
-		at := start.Add(time.Duration(i) * tenth)
-		f.add(12000, at) // video
-		f.add(6750, at)  // audio: together 1.5 Mbps
-	}
-	for _, elapsed := range []time.Duration{550 * time.Millisecond, 800 * time.Millisecond} {
-		now := start.Add(elapsed)
-		body := &counted{flow: f, own: &flow{}, began: start, first: 4096, got: 4096 + 64<<10}
-		got, first, flowing, speed, rate := body.coming(now)
-		if speed != 1.5e6 {
-			t.Fatalf("at %v measured %.0f bps, want audio and video together at 1.5 Mbps", elapsed, speed)
-		}
-		r := &route{streams: map[*controller]float64{}}
-		c := newController("probe", franceLadder, r, func() (time.Duration, time.Duration, bool) { return 0, 0, false })
-		quality := c.start()
-		to, _, _, change := c.progress(quality, coming{got: got - first, of: 5 << 20, flow: flowing, took: elapsed, speed: speed, rate: rate, length: 7680 * time.Millisecond})
-		if !change || c.ladder[to].height != 216 {
-			t.Errorf("at %v selected quality %d (change %t), want 216p", elapsed, to, change)
-		}
-	}
-	body := &counted{flow: f, own: &flow{}, began: start, first: 4096, got: 4096 + 64<<10}
-	if _, _, _, speed, _ := body.coming(start.Add(2 * time.Second)); speed != 0 {
-		t.Errorf("a stalled stream measured %.0f bps, want zero", speed)
-	}
-}
-
-func TestProbePartialFirstBucket(t *testing.T) {
-	start := time.Unix(1000, 0)
-	f := &flow{}
-	f.add(1, start) // a previous segment established the bucket alignment
-	began := start.Add(90 * time.Millisecond)
-	for i := 1; i <= 5; i++ {
-		f.add(50000, began.Add(time.Duration(i)*tenth))
-	}
-	body := &counted{flow: f, own: &flow{}, began: began, base: 1, first: 4096, got: 4096 + 250000}
-	if _, _, _, speed, _ := body.coming(began.Add(500 * time.Millisecond)); speed != 4e6 {
-		t.Fatalf("partially covered first bucket measured %.2f Mbps, want 4 Mbps", speed/1e6)
-	}
-}
-
-// Timestamps can arrive out of order when another read gets the lock first.
-func TestFlowOutOfOrder(t *testing.T) {
-	start := time.Unix(1000, 0)
-	for _, late := range []time.Duration{99 * time.Millisecond, 100 * time.Millisecond, 250 * time.Millisecond} {
-		t.Run(late.String(), func(t *testing.T) {
-			f := &flow{}
-			f.add(100, start)
-			f.add(50, start.Add(-late))
-			if got, sampled := f.fastest(start, start.Add(500*time.Millisecond)); !sampled || got != 150*8/0.5 {
-				t.Errorf("late sample: %.0f bps, sampled %t; want all 150 bytes counted", got, sampled)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+st.server.Addr+"/1/"+test.track+"/0/asset", nil)
+			var resp *http.Response
+			var fetchErr error
+			answered := make(chan struct{})
+			go func() {
+				resp, fetchErr = http.DefaultClient.Do(req)
+				close(answered)
+			}()
+			select {
+			case protocol := <-asked:
+				if protocol != 1 {
+					t.Fatalf("unwatched segment used HTTP/%d, want HTTP/1", protocol)
+				}
+			case <-ctx.Done():
+				t.Fatal("origin was not reached")
+			}
+			if test.cut {
+				st.mu.Lock()
+				l.cut()
+				st.mu.Unlock()
+			}
+			close(release)
+			<-answered // the request's deadline also bounds this wait
+			if fetchErr != nil {
+				t.Fatal(fetchErr)
+			}
+			defer resp.Body.Close()
+			if test.cut {
+				if resp.StatusCode != http.StatusNotFound {
+					t.Fatalf("cut segment returned %d", resp.StatusCode)
+				}
+			} else {
+				if _, err := io.CopyN(io.Discard, resp.Body, 1); err != nil {
+					t.Fatal(err)
+				}
+				cancel()
+			}
+			resp.Body.Close()
+			select {
+			case <-canceled:
+			case <-time.After(3 * time.Second):
+				t.Fatal("upstream body was not canceled")
+			}
+			resp, err = client.Get(origin.URL + "/next")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.ProtoMajor != 2 {
+				t.Errorf("ordinary request used %s", resp.Proto)
+			}
+			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+				t.Fatal(err)
 			}
 		})
-	}
-}
-
-// The connection's speed is told by its fastest half second.
-func TestFlowFastest(t *testing.T) {
-	since := time.Unix(1000, 0)
-	for _, test := range []struct {
-		name   string
-		tenths []int64 // the bytes that came in each tenth of a second
-		want   float64 // in bits a second
-	}{
-		{"evenly", []int64{100, 100, 100, 100, 100, 100, 100}, 500 * 8 / 0.5},
-		{"slowly at first, as on a connection that was idle", []int64{10, 20, 40, 80, 160, 320, 640, 640, 640, 640, 100}, 2880 * 8 / 0.5},
-		{"in a burst after a wait", []int64{0, 0, 0, 0, 0, 0, 900, 100}, 1000 * 8 / 0.5},
-		{"in less than half a second", []int64{500, 500, 500}, 0},
-	} {
-		f := &flow{}
-		for i, n := range test.tenths {
-			f.add(int(n), since.Add(time.Duration(i)*tenth))
-		}
-		if got, _ := f.fastest(since, since.Add(time.Duration(len(test.tenths))*tenth)); got != test.want {
-			t.Errorf("%s: fastest() = %.0f, want %.0f", test.name, got, test.want)
-		}
-	}
-	// Only what came between the two moments counts.
-	f := &flow{}
-	for i, n := range []int64{900, 900, 900, 900, 900, 100, 100, 100, 100, 100, 100} {
-		f.add(int(n), since.Add(time.Duration(i)*tenth))
-	}
-	if got, _ := f.fastest(since.Add(500*time.Millisecond), since.Add(1100*time.Millisecond)); got != 500*8/0.5 {
-		t.Errorf("after its first half second: fastest() = %.0f, want %.0f", got, 500*8/0.5)
-	}
-	// What is long past is forgotten, a stream that stood still for a while
-	// included.
-	later := since.Add(time.Hour)
-	for i := range 6 {
-		f.add(200, later.Add(time.Duration(i)*tenth))
-	}
-	if got, _ := f.fastest(later, later.Add(600*time.Millisecond)); got != 1000*8/0.5 || len(f.tenths) > 6000 {
-		t.Errorf("an hour later: fastest() = %.0f with %d tenths of a second kept, want %.0f and no more than ten minutes", got, len(f.tenths), 1000*8/0.5)
 	}
 }

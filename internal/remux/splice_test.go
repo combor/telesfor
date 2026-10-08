@@ -39,15 +39,11 @@ type timing struct{ decoded, shown, sound, clock []int64 }
 
 func timingOf(t *testing.T, stream []byte) timing {
 	t.Helper()
+	checkContinuity(t, stream)
 	var all timing
-	counters := map[int]byte{}
 	for ; len(stream) >= packetSize; stream = stream[packetSize:] {
 		packet := stream[:packetSize]
 		pid := int(packet[1]&0x1f)<<8 | int(packet[2])
-		if last, ok := counters[pid]; ok && packet[3]&0x0f != (last+1)&0x0f {
-			t.Errorf("PID %#x: a packet is counted %d after one counted %d", pid, packet[3]&0x0f, last)
-		}
-		counters[pid] = packet[3] & 0x0f
 		if clock, ok := clockReference(packet); ok {
 			all.clock = append(all.clock, clock)
 		}

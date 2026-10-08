@@ -151,7 +151,7 @@ func TestRelayInterruptedTransfer(t *testing.T) {
 // shown must reach ffmpeg with its timestamps repaired.
 func TestRelayRepairsTimestamps(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		file := segment(900000, frameLength)
+		file := tvpSegment(900000, frameLength)
 		if r.URL.Path == "/init.mp4" {
 			file = file[1:] // the same bytes, but not as whole packets
 		}
@@ -175,10 +175,10 @@ func TestRelayRepairsTimestamps(t *testing.T) {
 	// The first segment tells the relay how late the stream is. From then on
 	// every frame is repaired.
 	get(t, manifest, "segment1.ts")
-	if got := get(t, manifest, "segment2.ts"); got.status != 200 || got.body != string(segment(900000, 0)) {
+	if got := get(t, manifest, "segment2.ts"); got.status != 200 || got.body != string(tvpSegment(900000, 0)) {
 		t.Errorf("segment: got %d and %d bytes, want the segment with its frames decoded in time", got.status, len(got.body))
 	}
-	if got := get(t, manifest, "init.mp4"); got.status != 200 || got.body != string(segment(900000, frameLength)[1:]) {
+	if got := get(t, manifest, "init.mp4"); got.status != 200 || got.body != string(tvpSegment(900000, frameLength)[1:]) {
 		t.Errorf("another file: got %d and %d bytes, want it relayed as is", got.status, len(got.body))
 	}
 }

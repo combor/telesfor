@@ -223,15 +223,7 @@ func watch(t *testing.T, ffprobe string, stream []byte) watched {
 		t.Errorf("%d frames can be decoded of %d, counting one lost to each change of size: %v", decodable, w.frames, w.widths)
 	}
 
-	counters := map[int]byte{}
-	for packets := stream; len(packets) >= packetSize; packets = packets[packetSize:] {
-		pid, counter := int(packets[1]&0x1f)<<8|int(packets[2]), packets[3]&0x0f
-		if last, ok := counters[pid]; ok && packets[3]&0x10 != 0 && counter != (last+1)&0x0f {
-			t.Errorf("PID %#x: a packet is counted %d after one counted %d", pid, counter, last)
-			break
-		}
-		counters[pid] = counter
-	}
+	checkContinuity(t, stream)
 	return w
 }
 
@@ -433,13 +425,13 @@ func TestCopyEndsWithItsViewer(t *testing.T) {
 // must fail if audio is disconnected from the shared speed measurement.
 func TestAudioContributesToFlow(t *testing.T) {
 	const chunk = 32 << 10
-	rest := make(chan struct{})
+	resume := make(chan struct{})
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Length", "65536")
 		w.Write(make([]byte, chunk))
 		w.(http.Flusher).Flush()
 		select {
-		case <-rest:
+		case <-resume:
 		case <-req.Context().Done():
 			return
 		}
@@ -477,7 +469,7 @@ func TestAudioContributesToFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(2 * atOnce) // put the remaining bytes beyond the initial read burst
-	close(rest)
+	close(resume)
 	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
 		t.Fatal(err)
 	}

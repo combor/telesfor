@@ -8,67 +8,6 @@ import (
 	"testing"
 )
 
-// The PIDs of the stream the tests build.
-const (
-	tablePID = 0x1000 // the program map table
-	videoPID = 0x100
-	audioPID = 0x101
-)
-
-// packet builds an MPEG-TS packet. A keyframe is marked the way ffmpeg marks
-// one, as a random access point. The payload tells packets apart.
-func packet(pid int, begins, keyframe bool, payload ...byte) []byte {
-	p := []byte{0x47, byte(pid >> 8), byte(pid), 0x10}
-	if begins {
-		p[1] |= 0x40
-	}
-	if keyframe {
-		p[3] |= 0x20
-		p = append(p, 1, 0x40) // an adaptation field of one byte: its flags
-	}
-	p = append(p, payload...)
-	for len(p) < packetSize {
-		p = append(p, 0xff)
-	}
-	return p
-}
-
-// programMapPacket builds the table that lists the streams, with the clock on
-// the video.
-func programMapPacket(streams ...int) []byte {
-	section := []byte{
-		0x02, 0, 0, // table id; the section's length, filled in below
-		0, 1, 0xc1, 0, 0, // program number, version, section numbers
-		0xe0 | videoPID>>8, videoPID & 0xff, // the stream that carries the clock
-		0xf0, 0, // no descriptors of the program
-	}
-	for _, pid := range streams {
-		section = append(section, 0x1b, 0xe0|byte(pid>>8), byte(pid), 0xf0, 0) // type, PID, no descriptors
-	}
-	section = append(section, 0, 0, 0, 0) // a checksum that nobody checks
-	section[1], section[2] = 0xb0|byte((len(section)-3)>>8), byte(len(section)-3)
-	return packet(tablePID, true, false, append([]byte{0}, section...)...)
-}
-
-// The packets the test streams are made of.
-var (
-	pat = packet(0, true, false,
-		0,                // the section begins right here
-		0x00, 0xb0, 0x0d, // table id; the section's length
-		0, 1, 0xc1, 0, 0, // transport stream id, version, section numbers
-		0, 1, 0xe0|tablePID>>8, tablePID&0xff, // program 1 is described at tablePID
-		0, 0, 0, 0, // a checksum that nobody checks
-	)
-	pmt   = programMapPacket(videoPID, audioPID)
-	key1  = packet(videoPID, true, true, 'k', 1) // a keyframe begins
-	key2  = packet(videoPID, true, true, 'k', 2)
-	frame = packet(videoPID, true, false, 'f')  // another frame begins
-	more  = packet(videoPID, false, false, 'm') // more of a frame
-	aud1  = packet(audioPID, true, false, 'a', 1)
-	aud2  = packet(audioPID, true, false, 'a', 2)
-	rest  = packet(audioPID, false, false, 'r') // more of an audio frame
-)
-
 // names renders a stream packet by packet, to make a failed test readable.
 func names(stream []byte) string {
 	var names []string

@@ -15,6 +15,13 @@ and the others at a path, such as `/globo`. Plex takes them as devices of one
 DVR and shows a single channel list, sorted by number. So each tuner numbers
 its channels in a range of its own, which keeps a provider's channels together.
 
+Gathering a guide upstream can take minutes, which Plex is not made to wait:
+each tuner fetches its guide ahead of time — at startup, when its channels
+change and every six hours — and serves `/xmltv.xml` from that cache. While
+the source is down, the guide it has goes on being served. Only a guide not
+yet at hand, before the first fetch finishes or just after the channels
+change, is fetched with Plex waiting.
+
 ```mermaid
 flowchart LR
     provider["Streaming provider"] -->|"HLS through HTTP relay"| ffmpeg["ffmpeg"]

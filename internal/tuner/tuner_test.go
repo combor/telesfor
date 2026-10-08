@@ -255,6 +255,155 @@ func TestGuide(t *testing.T) {
 	}
 }
 
+// counting is a provider that counts the fetches of its guide, tells of each
+// as it begins, and can be broken.
+type counting struct {
+	fake
+	broken  atomic.Bool
+	fetches atomic.Int32
+	fetched chan struct{} // roomier than any test's fetches: a full one would wedge the fetcher, which sends holding t.fetching
+}
+
+func (c *counting) Programmes(ctx context.Context, channels []provider.Channel, from, to time.Time) ([]provider.Programme, error) {
+	c.fetches.Add(1)
+	c.fetched <- struct{}{}
+	if c.broken.Load() {
+		return nil, errors.New("the guide is down")
+	}
+	return c.fake.Programmes(ctx, channels, from, to)
+}
+
+// askGuide asks a tuner for its guide.
+func askGuide(t *testing.T, tuner *Tuner) *httptest.ResponseRecorder {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	tuner.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://plex.local:5004/xmltv.xml", nil))
+	return recorder
+}
+
+// TestGuideIsFetchedOnce checks that the guide is fetched upstream once, not
+// once per request: Plex is served from the cache.
+func TestGuideIsFetchedOnce(t *testing.T) {
+	p := &counting{fetched: make(chan struct{}, 8)}
+	tuner, err := New(t.Context(), p, nil, device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		response := askGuide(t, tuner)
+		var guide xmlTV
+		if err := xml.Unmarshal(response.Body.Bytes(), &guide); err != nil || len(guide.Programmes) != 2 {
+			t.Fatalf("xmltv.xml = %d %s, %v: want a guide of two programmes", response.Code, response.Body, err)
+		}
+	}
+	if n := p.fetches.Load(); n != 1 {
+		t.Errorf("three requests fetched the guide %d times, want once", n)
+	}
+}
+
+// TestGuideOutlivesItsSource checks that a guide that cannot be fetched anew
+// is not thrown away: Plex is served the one there is.
+func TestGuideOutlivesItsSource(t *testing.T) {
+	p := &counting{fetched: make(chan struct{}, 8)}
+	tuner, err := New(t.Context(), p, nil, device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := askGuide(t, tuner).Code; code != http.StatusOK {
+		t.Fatalf("xmltv.xml = %d, want 200", code)
+	}
+	<-p.fetched // the fetch that filled the cache
+
+	// The source goes down, and the guide grows old enough for keepFresh to
+	// want it anew.
+	p.broken.Store(true)
+	aged := *tuner.guide.Load()
+	aged.made = aged.made.Add(-2 * guideRefresh)
+	tuner.guide.Store(&aged)
+	tuner.nudge <- struct{}{}
+	<-p.fetched // the fetch that failed
+	// The word comes as the fetch begins. Whatever the failure does to the
+	// cache is done once the fetcher gives the token back.
+	tuner.fetching <- struct{}{}
+	<-tuner.fetching
+
+	response := askGuide(t, tuner)
+	var guide xmlTV
+	if err := xml.Unmarshal(response.Body.Bytes(), &guide); err != nil || len(guide.Programmes) != 2 {
+		t.Errorf("xmltv.xml while the source is down = %d %s, %v: want the guide fetched before", response.Code, response.Body, err)
+	}
+}
+
+// stuck is a provider whose guide fetch tells when it is entered, then blocks
+// until the test releases it or its context ends.
+type stuck struct {
+	fake
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *stuck) Programmes(ctx context.Context, _ []provider.Channel, _, _ time.Time) ([]provider.Programme, error) {
+	s.entered <- struct{}{}
+	select {
+	case <-s.release:
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// TestCancelledGuideRequestIsNotKeptWaiting asks for the guide, with the
+// request cancelled already, while the first fetch is still at the provider.
+// The viewer is gone: the request must return, not wait the fetch out.
+func TestCancelledGuideRequestIsNotKeptWaiting(t *testing.T) {
+	p := &stuck{entered: make(chan struct{}, 8), release: make(chan struct{})}
+	defer close(p.release)
+	tuner, err := New(t.Context(), p, nil, device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-p.entered // the first fetch is in flight
+
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	returned := make(chan int, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		tuner.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://plex.local:5004/xmltv.xml", nil).WithContext(cancelled))
+		returned <- recorder.Code
+	}()
+	select {
+	case code := <-returned:
+		if code != http.StatusBadGateway {
+			t.Errorf("cancelled request was answered %d, want 502", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a cancelled request is kept waiting for the fetch in flight")
+	}
+}
+
+// TestScanRefreshesTheGuide checks that a scan alone has the guide fetched
+// anew, before any request: Plex is not kept waiting after an account change.
+func TestScanRefreshesTheGuide(t *testing.T) {
+	p := &counting{fetched: make(chan struct{}, 8)}
+	tuner, err := New(t.Context(), p, nil, device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-p.fetched // the fetch that filled the cache
+	if err := tuner.Scan(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-p.fetched:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no guide fetch within 5s of a scan")
+	}
+	if n := p.fetches.Load(); n != 2 {
+		t.Errorf("a scan fetched the guide %d times, want once", n)
+	}
+}
+
 func TestStream(t *testing.T) {
 	if status := get(t, "/stream/fake/missing").Code; status != http.StatusNotFound {
 		t.Errorf("unknown channel: got %d, want 404", status)

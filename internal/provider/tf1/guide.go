@@ -39,7 +39,7 @@ var paris = func() *time.Location {
 // what is on it, so a channel with nothing on has nothing to pick there.
 //
 // It is also when telesfor looks after the account: its tokens are renewed
-// by use, and Plex asks for the guide every day.
+// by use, and the tuner fetches the guide several times a day.
 func (p *Provider) Programmes(ctx context.Context, listed []provider.Channel, from, to time.Time) ([]provider.Programme, error) {
 	p.token(ctx, "")
 

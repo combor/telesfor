@@ -49,6 +49,9 @@ type Tuner struct {
 	mux      *http.ServeMux
 	scanning sync.Mutex                // one Scan at a time
 	lineup   atomic.Pointer[[]channel] // replaced whole by Scan
+	fetching sync.Mutex                // one guide fetch at a time
+	guide    atomic.Pointer[guide]     // replaced whole by fetchGuide
+	nudge    chan struct{}             // pokes keepFresh after a Scan
 }
 
 // channel is a provider's channel with its place in the lineup.
@@ -58,9 +61,10 @@ type channel struct {
 	streams *atomic.Int32 // how many streams of it are open
 }
 
-// New returns a tuner that offers the channels of p.
+// New returns a tuner that offers the channels of p. Until ctx ends, it
+// keeps the guide fetched ahead of Plex asking for it: see keepFresh.
 func New(ctx context.Context, p provider.Provider, remuxer *remux.Remuxer, device Device) (*Tuner, error) {
-	t := &Tuner{provider: p, device: device, remux: remuxer, mux: http.NewServeMux()}
+	t := &Tuner{provider: p, device: device, remux: remuxer, mux: http.NewServeMux(), nudge: make(chan struct{}, 1)}
 	if err := t.Scan(ctx); err != nil {
 		return nil, err
 	}
@@ -78,6 +82,7 @@ func New(ctx context.Context, p provider.Provider, remuxer *remux.Remuxer, devic
 	t.mux.HandleFunc("POST /lineup.post", t.scan)
 	t.mux.HandleFunc("GET /stream/{provider}/{channel}", t.stream)
 	t.mux.HandleFunc("GET /xmltv.xml", t.xmltv)
+	go t.keepFresh(ctx)
 	return t, nil
 }
 
@@ -109,6 +114,12 @@ func (t *Tuner) Scan(ctx context.Context) error {
 		lineup[i] = channel{c, strconv.Itoa(t.device.First + place), streams}
 	}
 	t.lineup.Store(&lineup)
+	// The guide names channels by their lineup numbers: nudge keepFresh to
+	// fetch it anew. On a Tuner made without New nothing listens, or sends.
+	select {
+	case t.nudge <- struct{}{}:
+	default: // a nudge is pending already
+	}
 	return nil
 }
 

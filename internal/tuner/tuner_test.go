@@ -255,6 +255,81 @@ func TestGuide(t *testing.T) {
 	}
 }
 
+// counting is a provider that counts the fetches of its guide, tells of each
+// as it begins, and can be broken.
+type counting struct {
+	fake
+	broken  atomic.Bool
+	fetches atomic.Int32
+	fetched chan struct{}
+}
+
+func (c *counting) Programmes(ctx context.Context, channels []provider.Channel, from, to time.Time) ([]provider.Programme, error) {
+	c.fetches.Add(1)
+	c.fetched <- struct{}{}
+	if c.broken.Load() {
+		return nil, errors.New("the guide is down")
+	}
+	return c.fake.Programmes(ctx, channels, from, to)
+}
+
+// askGuide asks a tuner for its guide.
+func askGuide(t *testing.T, tuner *Tuner) *httptest.ResponseRecorder {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	tuner.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://plex.local:5004/xmltv.xml", nil))
+	return recorder
+}
+
+// TestGuideIsFetchedOnce checks that the guide is fetched upstream once, not
+// once per request: Plex is served from the cache.
+func TestGuideIsFetchedOnce(t *testing.T) {
+	p := &counting{fetched: make(chan struct{}, 8)}
+	tuner, err := New(t.Context(), p, nil, device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		response := askGuide(t, tuner)
+		var guide xmlTV
+		if err := xml.Unmarshal(response.Body.Bytes(), &guide); err != nil || len(guide.Programmes) != 2 {
+			t.Fatalf("xmltv.xml = %d %s, %v: want a guide of two programmes", response.Code, response.Body, err)
+		}
+	}
+	if n := p.fetches.Load(); n != 1 {
+		t.Errorf("three requests fetched the guide %d times, want once", n)
+	}
+}
+
+// TestGuideOutlivesItsSource checks that a guide that cannot be fetched anew
+// is not thrown away: Plex is served the one there is.
+func TestGuideOutlivesItsSource(t *testing.T) {
+	p := &counting{fetched: make(chan struct{}, 8)}
+	tuner, err := New(t.Context(), p, nil, device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := askGuide(t, tuner).Code; code != http.StatusOK {
+		t.Fatalf("xmltv.xml = %d, want 200", code)
+	}
+	<-p.fetched // the fetch that filled the cache
+
+	// The source goes down, and the guide grows old enough for keepFresh to
+	// want it anew.
+	p.broken.Store(true)
+	aged := *tuner.guide.Load()
+	aged.made = aged.made.Add(-2 * guideRefresh)
+	tuner.guide.Store(&aged)
+	tuner.nudge <- struct{}{}
+	<-p.fetched // the fetch that failed
+
+	response := askGuide(t, tuner)
+	var guide xmlTV
+	if err := xml.Unmarshal(response.Body.Bytes(), &guide); err != nil || len(guide.Programmes) != 2 {
+		t.Errorf("xmltv.xml while the source is down = %d %s, %v: want the guide fetched before", response.Code, response.Body, err)
+	}
+}
+
 func TestStream(t *testing.T) {
 	if status := get(t, "/stream/fake/missing").Code; status != http.StatusNotFound {
 		t.Errorf("unknown channel: got %d, want 404", status)

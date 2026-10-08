@@ -35,7 +35,9 @@ No tuner hardware is needed.
   and franceinfo, [without an account](docs/usage.md#francetv).
 - **TF1+'s channels.** TF1, TFX and TF1 Séries Films, with a
   [TF1+ account](docs/usage.md#tf1), and LCI without one.
-- **A 48-hour TV guide.** Programme listings come straight from the providers.
+- **A 48-hour TV guide.** Programme listings come straight from the
+  providers, fetched ahead of time and refreshed through the day, so Plex
+  never waits on them.
 - **Original stream quality.** Up to 1080p without transcoding, in the best
   quality your connection keeps up with.
 

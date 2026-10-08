@@ -1,10 +1,12 @@
 package tuner
 
 import (
+	"bytes"
+	"context"
 	"encoding/xml"
-	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/combor/telesfor/internal/provider"
@@ -12,6 +14,13 @@ import (
 
 // guideSpan is how far ahead the guide reaches.
 const guideSpan = 48 * time.Hour
+
+// The guide is fetched ahead of Plex asking for it: anew every guideRefresh,
+// and after guideRetry when a fetch failed.
+const (
+	guideRefresh = 6 * time.Hour
+	guideRetry   = 10 * time.Minute
+)
 
 // xmltvTime is the timestamp format of XMLTV, as in 20261003173500 +0200.
 const xmltvTime = "20060102150405 -0700"
@@ -42,58 +51,132 @@ type (
 	}
 )
 
-// xmltv serves the TV guide of the whole lineup in XMLTV format.
+// guide is a rendered XMLTV document, ready to serve. It carries the lineup
+// it was rendered from, whose numbers name its channels — the guide of
+// another lineup is stale — and when it was fetched, which tells keepFresh
+// when the next one is due.
+type guide struct {
+	document []byte
+	lineup   *[]channel
+	made     time.Time
+}
+
+// xmltv serves the TV guide of the whole lineup in XMLTV format, from the
+// cache keepFresh keeps filled: gathering a guide upstream can take minutes,
+// which Plex is not made to wait. Only a guide that is not at hand — before
+// the first fetch has finished, or after a Scan it has yet to follow — is
+// fetched on the spot.
+func (t *Tuner) xmltv(w http.ResponseWriter, r *http.Request) {
+	document, err := t.guideDocument(r.Context())
+	if err != nil {
+		// Better no answer than half a guide: Plex keeps the one it has.
+		slog.Error("guide failed", "provider", t.provider.Name(), "err", err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.Header().Set("Content-Length", strconv.Itoa(len(document)))
+	w.Write(document)
+}
+
+// guideDocument returns the guide of the current lineup, fetching it first
+// when there is none. However old, the guide there is beats fetching anew
+// with Plex waiting: keepFresh sees to its age.
+func (t *Tuner) guideDocument(ctx context.Context) ([]byte, error) {
+	if g := t.guide.Load(); g != nil && g.lineup == t.lineup.Load() {
+		return g.document, nil
+	}
+	t.fetching.Lock()
+	defer t.fetching.Unlock()
+	if g := t.guide.Load(); g != nil && g.lineup == t.lineup.Load() {
+		return g.document, nil // fetched while this request waited
+	}
+	return t.fetchGuide(ctx)
+}
+
+// keepFresh keeps the guide fetched ahead of Plex asking for it: right away,
+// so a tuner fresh from a restart has one at hand, after every Scan, whose
+// lineup the guide follows, and on a schedule, so what is served stays ahead
+// of the clock. It runs until ctx ends.
+//
+// A fetch that fails leaves the guide there was, which Plex is given rather
+// than nothing, and is tried again sooner.
+func (t *Tuner) keepFresh(ctx context.Context) {
+	for {
+		t.fetching.Lock()
+		wait := guideRefresh
+		if g := t.guide.Load(); g != nil && g.lineup == t.lineup.Load() && time.Since(g.made) < guideRefresh {
+			wait = guideRefresh - time.Since(g.made) // fetched meanwhile, by a request perhaps
+		} else if _, err := t.fetchGuide(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("guide refresh failed", "provider", t.provider.Name(), "err", err)
+			wait = guideRetry
+		}
+		t.fetching.Unlock()
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.nudge: // a Scan has published a new lineup
+		case <-time.After(wait):
+		}
+	}
+}
+
+// fetchGuide asks the provider for the programmes of the whole lineup,
+// renders the XMLTV document and caches it. The caller holds t.fetching.
 //
 // Channels are identified by their lineup number, so the guide and the lineup
 // always agree on which channel is which.
-func (t *Tuner) xmltv(w http.ResponseWriter, r *http.Request) {
-	guide := xmlTV{Generator: "telesfor"}
-	lineup := t.channels()
-	channels := make([]provider.Channel, len(lineup))
+func (t *Tuner) fetchGuide(ctx context.Context) ([]byte, error) {
+	began := time.Now()
+	lineup := t.lineup.Load()
+	tv := xmlTV{Generator: "telesfor"}
+	var channels []provider.Channel
 	numbers := map[string]string{} // the provider's channel id → lineup number
-	for i, ch := range lineup {
-		c := xmlChannel{ID: ch.number, Name: ch.Name}
-		if ch.Logo != "" {
-			c.Icon = &xmlIcon{ch.Logo}
+	if lineup != nil {
+		for _, ch := range *lineup {
+			c := xmlChannel{ID: ch.number, Name: ch.Name}
+			if ch.Logo != "" {
+				c.Icon = &xmlIcon{ch.Logo}
+			}
+			tv.Channels = append(tv.Channels, c)
+			channels = append(channels, ch.Channel)
+			numbers[ch.ID] = ch.number
 		}
-		guide.Channels = append(guide.Channels, c)
-		channels[i] = ch.Channel
-		numbers[ch.ID] = ch.number
 	}
 
-	var programmes []provider.Programme
 	if len(channels) > 0 {
 		from := time.Now().Truncate(time.Hour)
-		var err error
-		programmes, err = t.provider.Programmes(r.Context(), channels, from, from.Add(guideSpan))
+		programmes, err := t.provider.Programmes(ctx, channels, from, from.Add(guideSpan))
 		if err != nil {
-			// Better no answer than half a guide: Plex keeps the one it has.
-			slog.Error("guide failed", "provider", t.provider.Name(), "err", err)
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
+			return nil, err
 		}
-	}
-	for _, programme := range programmes {
-		number, ok := numbers[programme.ChannelID]
-		if !ok {
-			continue
+		for _, programme := range programmes {
+			number, ok := numbers[programme.ChannelID]
+			if !ok {
+				continue
+			}
+			p := xmlProgramme{
+				Start:   programme.Start.Format(xmltvTime),
+				Stop:    programme.Stop.Format(xmltvTime),
+				Channel: number,
+				Title:   programme.Title,
+				Desc:    programme.Description,
+			}
+			if programme.Image != "" {
+				p.Icon = &xmlIcon{programme.Image}
+			}
+			tv.Programmes = append(tv.Programmes, p)
 		}
-		p := xmlProgramme{
-			Start:   programme.Start.Format(xmltvTime),
-			Stop:    programme.Stop.Format(xmltvTime),
-			Channel: number,
-			Title:   programme.Title,
-			Desc:    programme.Description,
-		}
-		if programme.Image != "" {
-			p.Icon = &xmlIcon{programme.Image}
-		}
-		guide.Programmes = append(guide.Programmes, p)
 	}
 
-	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	io.WriteString(w, xml.Header)
-	encoder := xml.NewEncoder(w)
+	var document bytes.Buffer
+	document.WriteString(xml.Header)
+	encoder := xml.NewEncoder(&document)
 	encoder.Indent("", "  ")
-	encoder.Encode(guide)
+	if err := encoder.Encode(tv); err != nil {
+		return nil, err
+	}
+	t.guide.Store(&guide{document: document.Bytes(), lineup: lineup, made: time.Now()})
+	slog.Debug("guide fetched", "provider", t.provider.Name(), "programmes", len(tv.Programmes), "took", since(began))
+	return document.Bytes(), nil
 }

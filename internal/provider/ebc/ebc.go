@@ -90,12 +90,7 @@ func New(proxy string) (*Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ebc: %w", err)
 	}
-	return through(client, channels), nil
-}
-
-// through returns a provider that reaches the channels with client.
-func through(client *http.Client, channels []channel) *Provider {
-	return &Provider{client: client, channels: channels}
+	return &Provider{client: client, channels: channels}, nil
 }
 
 // Name implements provider.Provider.

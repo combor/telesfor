@@ -93,10 +93,10 @@ func serve(t *testing.T) (*ebc, *Provider) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
-	return e, through(server.Client(), []channel{
+	return e, &Provider{client: server.Client(), channels: []channel{
 		{id: "tv-brasil", name: "TV Brasil", stream: server.URL + "/tvbrasil/index.m3u8", guide: server.URL + "/programacao"},
 		{id: "canal-gov", name: "Canal Gov", stream: server.URL + "/canalgov/index.m3u8"},
-	})
+	}}
 }
 
 func TestChannels(t *testing.T) {

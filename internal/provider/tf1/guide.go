@@ -17,13 +17,8 @@ import (
 	"github.com/combor/telesfor/internal/provider"
 )
 
-const (
-	// block is how long a placeholder lasts in the guide.
-	block = time.Hour
-
-	// unlisted is what a placeholder says of itself.
-	unlisted = "TF1 has published no listings for this time."
-)
+// unlisted is what a placeholder says of itself.
+const unlisted = "TF1 has published no listings for this time."
 
 // paris is the time TF1's guide is laid out in.
 var paris = func() *time.Location {
@@ -64,7 +59,7 @@ func (p *Provider) Programmes(ctx context.Context, listed []provider.Channel, fr
 		if failed[i] != nil {
 			return nil, fmt.Errorf("tf1: fetching guide: %w", failed[i])
 		}
-		programmes = append(programmes, fill(l, known[i], from, to)...)
+		programmes = append(programmes, provider.Fill(l, known[i], from, to, unlisted)...)
 	}
 	return programmes, nil
 }
@@ -168,35 +163,6 @@ func text(markup string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
-}
-
-// fill returns the programmes of a channel with a placeholder wherever there
-// is none between from and to: the channel's name, an hour at a time by the
-// clock.
-func fill(ch provider.Channel, known []provider.Programme, from, to time.Time) []provider.Programme {
-	var programmes []provider.Programme
-	at := from
-	until := func(next time.Time) {
-		for at.Before(next) {
-			stop := at.Truncate(block).Add(block)
-			if stop.After(next) {
-				stop = next
-			}
-			programmes = append(programmes, provider.Programme{
-				ChannelID: ch.ID, Title: ch.Name, Description: unlisted, Start: at, Stop: stop,
-			})
-			at = stop
-		}
-	}
-	for _, programme := range known {
-		until(programme.Start)
-		programmes = append(programmes, programme)
-		if programme.Stop.After(at) {
-			at = programme.Stop
-		}
-	}
-	until(to)
-	return programmes
 }
 
 // page fetches a page of the guide.

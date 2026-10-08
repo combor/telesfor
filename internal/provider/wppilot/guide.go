@@ -15,9 +15,6 @@ import (
 )
 
 const (
-	// block is how long a placeholder lasts in the guide.
-	block = time.Hour
-
 	// unlisted is what a placeholder says of itself.
 	unlisted = "WP Pilot has published no listings for this time."
 
@@ -85,36 +82,7 @@ func (p *Provider) Programmes(ctx context.Context, listed []provider.Channel, fr
 	var programmes []provider.Programme
 	for _, ch := range listed {
 		slices.SortFunc(known[ch.ID], func(a, b provider.Programme) int { return a.Start.Compare(b.Start) })
-		programmes = append(programmes, fill(ch, known[ch.ID], from, to)...)
+		programmes = append(programmes, provider.Fill(ch, known[ch.ID], from, to, unlisted)...)
 	}
 	return programmes, nil
-}
-
-// fill returns the programmes of a channel with a placeholder wherever there
-// is none between from and to: the channel's name, an hour at a time by the
-// clock.
-func fill(ch provider.Channel, known []provider.Programme, from, to time.Time) []provider.Programme {
-	var programmes []provider.Programme
-	at := from
-	until := func(next time.Time) {
-		for at.Before(next) {
-			stop := at.Truncate(block).Add(block)
-			if stop.After(next) {
-				stop = next
-			}
-			programmes = append(programmes, provider.Programme{
-				ChannelID: ch.ID, Title: ch.Name, Description: unlisted, Start: at, Stop: stop,
-			})
-			at = stop
-		}
-	}
-	for _, programme := range known {
-		until(programme.Start)
-		programmes = append(programmes, programme)
-		if programme.Stop.After(at) {
-			at = programme.Stop
-		}
-	}
-	until(to)
-	return programmes
 }

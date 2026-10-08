@@ -29,9 +29,6 @@ const (
 	// guideDay is the format of a day in the guide's address.
 	guideDay = "20060102"
 
-	// block is how long a placeholder lasts in the guide.
-	block = time.Hour
-
 	// What a placeholder says of itself.
 	unlisted = "EBC has published no listings for this time."
 	unnamed  = "EBC's guide has no name for this programme."
@@ -133,7 +130,7 @@ func (p *Provider) Programmes(ctx context.Context, channels []provider.Channel, 
 				return nil, fmt.Errorf("ebc: fetching guide: nothing on %s", ch.name)
 			}
 		}
-		programmes = append(programmes, fill(listed, known, from, to)...)
+		programmes = append(programmes, provider.Fill(listed, known, from, to, unlisted)...)
 	}
 	return programmes, nil
 }
@@ -195,35 +192,6 @@ func (p *Provider) listings(ctx context.Context, ch channel, from, to time.Time)
 		programmes = append(programmes, programme)
 	}
 	return programmes, nil
-}
-
-// fill returns the programmes of a channel with a placeholder wherever there
-// is none between from and to: the channel's name, an hour at a time by the
-// clock.
-func fill(ch provider.Channel, known []provider.Programme, from, to time.Time) []provider.Programme {
-	var programmes []provider.Programme
-	at := from
-	until := func(next time.Time) {
-		for at.Before(next) {
-			stop := at.Truncate(block).Add(block)
-			if stop.After(next) {
-				stop = next
-			}
-			programmes = append(programmes, provider.Programme{
-				ChannelID: ch.ID, Title: ch.Name, Description: unlisted, Start: at, Stop: stop,
-			})
-			at = stop
-		}
-	}
-	for _, programme := range known {
-		until(programme.Start)
-		programmes = append(programmes, programme)
-		if programme.Stop.After(at) {
-			at = programme.Stop
-		}
-	}
-	until(to)
-	return programmes
 }
 
 // Stream returns the channel's master playlist, once a look at it finds the

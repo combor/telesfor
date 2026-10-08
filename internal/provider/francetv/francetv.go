@@ -51,9 +51,6 @@ const (
 	// see session.
 	rest = time.Minute
 
-	// block is how long a placeholder lasts in the guide.
-	block = time.Hour
-
 	// unlisted is what a placeholder says of itself.
 	unlisted = "France Télévisions has published no listings for this time."
 )
@@ -225,7 +222,7 @@ func (p *Provider) Programmes(ctx context.Context, channels []provider.Channel, 
 		if len(known) == 0 {
 			return nil, fmt.Errorf("francetv: fetching guide: nothing on %s", ch.Name)
 		}
-		programmes = append(programmes, fill(ch, known, from, to)...)
+		programmes = append(programmes, provider.Fill(ch, known, from, to, unlisted)...)
 	}
 	return programmes, nil
 }
@@ -421,36 +418,6 @@ func spelled(slug string) string {
 		return ""
 	}
 	return string(unicode.ToUpper(first)) + words[size:]
-}
-
-// fill returns the programmes of a channel with a placeholder wherever there
-// is none between from and to: the channel's name, an hour at a time by the
-// clock. Plex offers a channel by what is on it, so a channel with nothing on
-// has nothing to pick there.
-func fill(ch provider.Channel, known []provider.Programme, from, to time.Time) []provider.Programme {
-	var programmes []provider.Programme
-	at := from
-	until := func(next time.Time) {
-		for at.Before(next) {
-			stop := at.Truncate(block).Add(block)
-			if stop.After(next) {
-				stop = next
-			}
-			programmes = append(programmes, provider.Programme{
-				ChannelID: ch.ID, Title: ch.Name, Description: unlisted, Start: at, Stop: stop,
-			})
-			at = stop
-		}
-	}
-	for _, programme := range known {
-		until(programme.Start)
-		programmes = append(programmes, programme)
-		if programme.Stop.After(at) {
-			at = programme.Stop
-		}
-	}
-	until(to)
-	return programmes
 }
 
 // Stream asks France Télévisions where the channel's stream is and for a pass

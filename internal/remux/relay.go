@@ -17,6 +17,10 @@ import (
 	"github.com/combor/telesfor/internal/httpclient"
 )
 
+// maxPlaylist is the most of a playlist to read: France Télévisions'
+// hold four hours, at under a megabyte.
+const maxPlaylist = 8 << 20
+
 // relay lets ffmpeg read one stream through the provider's HTTP client.
 //
 // Every upstream server the stream touches gets a twin: a loopback listener
@@ -214,6 +218,16 @@ func (r *relay) count(playlist []byte) {
 	}
 }
 
+// passHeaders starts the answer to ffmpeg the way upstream answered.
+func passHeaders(w http.ResponseWriter, resp *http.Response) {
+	for _, name := range []string{"Content-Type", "Content-Range", "Accept-Ranges"} {
+		if value := resp.Header.Get(name); value != "" {
+			w.Header().Set(name, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+}
+
 // pass copies the body of a response to w. MPEG-TS comes in packets of 188
 // bytes, so a body that may be made of them is passed on in whole packets,
 // with their timestamps repaired.
@@ -254,4 +268,14 @@ func (r *relay) close() {
 		twin.Close()
 	}
 	r.release()
+}
+
+// file is the name of the file at an address, for the log and for ffmpeg,
+// which tells by the name what kind of file to expect.
+func file(address *url.URL) string {
+	name := path.Base(address.Path)
+	if name == "." || name == "/" {
+		return "file"
+	}
+	return name
 }

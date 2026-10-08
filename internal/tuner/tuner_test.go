@@ -256,12 +256,21 @@ func TestGuide(t *testing.T) {
 }
 
 // counting is a provider that counts the fetches of its guide, tells of each
-// as it begins, and can be broken.
+// as it begins, and can be broken, or given a third channel.
 type counting struct {
 	fake
 	broken  atomic.Bool
+	third   atomic.Bool
 	fetches atomic.Int32
 	fetched chan struct{} // roomier than any test's fetches: a full one would wedge the fetcher, which sends holding t.fetching
+}
+
+func (c *counting) Channels(ctx context.Context) ([]provider.Channel, error) {
+	channels, err := c.fake.Channels(ctx)
+	if c.third.Load() {
+		channels = append(channels, provider.Channel{ID: "three", Name: "Three"})
+	}
+	return channels, err
 }
 
 func (c *counting) Programmes(ctx context.Context, channels []provider.Channel, from, to time.Time) ([]provider.Programme, error) {
@@ -366,24 +375,21 @@ func TestCancelledGuideRequestIsNotKeptWaiting(t *testing.T) {
 
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	returned := make(chan int, 1)
+	returned := make(chan struct{})
 	go func() {
-		recorder := httptest.NewRecorder()
-		tuner.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://plex.local:5004/xmltv.xml", nil).WithContext(cancelled))
-		returned <- recorder.Code
+		defer close(returned)
+		tuner.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://plex.local:5004/xmltv.xml", nil).WithContext(cancelled))
 	}()
 	select {
-	case code := <-returned:
-		if code != http.StatusBadGateway {
-			t.Errorf("cancelled request was answered %d, want 502", code)
-		}
+	case <-returned:
 	case <-time.After(5 * time.Second):
 		t.Fatal("a cancelled request is kept waiting for the fetch in flight")
 	}
 }
 
-// TestScanRefreshesTheGuide checks that a scan alone has the guide fetched
-// anew, before any request: Plex is not kept waiting after an account change.
+// TestScanRefreshesTheGuide checks that a scan that changes the lineup has
+// the guide fetched anew, before any request: Plex is not kept waiting after
+// an account change.
 func TestScanRefreshesTheGuide(t *testing.T) {
 	p := &counting{fetched: make(chan struct{}, 8)}
 	tuner, err := New(t.Context(), p, nil, device)
@@ -391,16 +397,45 @@ func TestScanRefreshesTheGuide(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-p.fetched // the fetch that filled the cache
+	p.third.Store(true)
 	if err := tuner.Scan(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case <-p.fetched:
 	case <-time.After(5 * time.Second):
-		t.Fatal("no guide fetch within 5s of a scan")
+		t.Fatal("no guide fetch within 5s of a scan that changed the lineup")
 	}
 	if n := p.fetches.Load(); n != 2 {
-		t.Errorf("a scan fetched the guide %d times, want once", n)
+		t.Errorf("the guide was fetched %d times in all after a scan, want two", n)
+	}
+}
+
+// TestUnchangedScanKeepsTheGuide checks that a scan that changes nothing
+// keeps the cached guide: what there is goes on being served, even while the
+// source is down.
+func TestUnchangedScanKeepsTheGuide(t *testing.T) {
+	p := &counting{fetched: make(chan struct{}, 8)}
+	tuner, err := New(t.Context(), p, nil, device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := askGuide(t, tuner).Code; code != http.StatusOK {
+		t.Fatalf("xmltv.xml = %d, want 200", code)
+	}
+	<-p.fetched // the fetch that filled the cache
+
+	p.broken.Store(true)
+	if err := tuner.Scan(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	response := askGuide(t, tuner)
+	var guide xmlTV
+	if err := xml.Unmarshal(response.Body.Bytes(), &guide); err != nil || len(guide.Programmes) != 2 {
+		t.Errorf("xmltv.xml after an unchanged scan = %d %s, %v: want the guide fetched before", response.Code, response.Body, err)
+	}
+	if n := p.fetches.Load(); n != 1 {
+		t.Errorf("the guide was fetched %d times though nothing changed, want once", n)
 	}
 }
 

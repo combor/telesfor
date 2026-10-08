@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -113,6 +114,11 @@ func (t *Tuner) Scan(ctx context.Context) error {
 			place = c.Place - 1
 		}
 		lineup[i] = channel{c, strconv.Itoa(t.device.First + place), streams}
+	}
+	// A scan that changes nothing keeps the lineup standing, and with it the
+	// cached guide: see currentGuide.
+	if old := t.lineup.Load(); old != nil && slices.Equal(*old, lineup) {
+		return nil
 	}
 	t.lineup.Store(&lineup)
 	// The guide names channels by their lineup numbers: nudge keepFresh to

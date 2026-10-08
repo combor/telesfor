@@ -65,7 +65,7 @@ jobs:
           cache: false
       # GoReleaser's Go build cache, under a key of its own: setup-go's key
       # is shared with the test job, whose cache no cross-compilation can use.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
           key: go-build-goreleaser-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
@@ -76,11 +76,23 @@ jobs:
         with:
           version: v2.18.2
           args: release --snapshot --clean --skip=nix
-      # The service fetches its channels from TVP as it starts.
+      # The service fetches its channels from TVP as it starts. The pass is
+      # asserted: a leg whose name drifted from the Go test's distros table
+      # would otherwise go green having run nothing.
       - name: Install and run the package as a systemd service
+        shell: bash
         env:
           TELESFOR_SMOKE_DIST: ${{ github.workspace }}/dist
-        run: go test -count=1 -timeout 20m -run 'TestPackageService/${{ matrix.distro }}' ./cmd/telesfor
+        run: |
+          go test -count=1 -timeout 20m -run '^TestPackageService$/^${{ matrix.distro }}$' -v ./cmd/telesfor | tee smoke.out
+          grep -q -- '--- PASS: TestPackageService/${{ matrix.distro }}' smoke.out
+      # One leg saves for the three: the builds are identical, and the shared
+      # key takes one save.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.distro == 'debian'
+        with:
+          path: ~/.cache/go-build
+          key: go-build-goreleaser-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
 
   container-smoke:
     name: Container Smoke Test
@@ -132,8 +144,8 @@ jobs:
         with:
           go-version-file: 'go.mod'
           cache: false
-      # Filled by the smoke test's identical build: see its cache step.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Filled by the smoke test's identical build: see its cache steps.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
           key: go-build-goreleaser-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}

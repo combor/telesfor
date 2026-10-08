@@ -69,6 +69,9 @@ type guide struct {
 func (t *Tuner) xmltv(w http.ResponseWriter, r *http.Request) {
 	document, err := t.guideDocument(r.Context())
 	if err != nil {
+		if r.Context().Err() != nil {
+			return // the viewer left: there is nobody to answer
+		}
 		// Better no answer than half a guide: Plex keeps the one it has.
 		slog.Error("guide failed", "provider", t.provider.Name(), "err", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -82,7 +85,7 @@ func (t *Tuner) xmltv(w http.ResponseWriter, r *http.Request) {
 // when there is none. However old, the guide there is beats fetching anew
 // with Plex waiting: keepFresh sees to its age.
 func (t *Tuner) guideDocument(ctx context.Context) ([]byte, error) {
-	if g := t.guide.Load(); g != nil && g.lineup == t.lineup.Load() {
+	if g := t.currentGuide(); g != nil {
 		return g.document, nil
 	}
 	select {
@@ -91,10 +94,22 @@ func (t *Tuner) guideDocument(ctx context.Context) ([]byte, error) {
 		return nil, ctx.Err()
 	}
 	defer func() { <-t.fetching }()
-	if g := t.guide.Load(); g != nil && g.lineup == t.lineup.Load() {
+	if g := t.currentGuide(); g != nil {
 		return g.document, nil // fetched while this request waited
 	}
-	return t.fetchGuide(ctx)
+	// The fetch outlives a viewer that leaves while it runs: the cache wants
+	// the answer whoever asked for it.
+	return t.fetchGuide(context.WithoutCancel(ctx))
+}
+
+// currentGuide returns the cached guide of the current lineup, or nil when
+// there is none, or the lineup has moved on and may number the channels anew.
+func (t *Tuner) currentGuide() *guide {
+	g := t.guide.Load()
+	if g == nil || g.lineup != t.lineup.Load() {
+		return nil
+	}
+	return g
 }
 
 // keepFresh keeps the guide fetched ahead of Plex asking for it: right away,
@@ -112,8 +127,9 @@ func (t *Tuner) keepFresh(ctx context.Context) {
 			return
 		}
 		wait := guideRefresh
-		if g := t.guide.Load(); g != nil && g.lineup == t.lineup.Load() && time.Since(g.made) < guideRefresh {
+		if g := t.currentGuide(); g != nil && time.Since(g.made) < guideRefresh {
 			wait = guideRefresh - time.Since(g.made) // fetched meanwhile, by a request or an earlier pass
+			retry = guideRetry                       // a fetch succeeded, whosever it was
 		} else if _, err := t.fetchGuide(ctx); err != nil && ctx.Err() == nil {
 			slog.Error("guide refresh failed", "provider", t.provider.Name(), "err", err)
 			// A source that stays down is asked less and less often.

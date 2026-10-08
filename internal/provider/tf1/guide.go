@@ -96,7 +96,6 @@ var (
 	episode = regexp.MustCompile(`(?s)class="episode">(.*?)</div>`)
 	about   = regexp.MustCompile(`(?s)class="resume">(.*?)</div>`)
 	picture = regexp.MustCompile(`<source srcset="([^" ]+)`)
-	tag     = regexp.MustCompile(`<[^>]*>`)
 )
 
 // broadcast reads a day of the guide, found at an address. It is a day of the
@@ -124,11 +123,11 @@ func broadcast(page string, day time.Time, address string) []provider.Programme 
 		last = hours*60 + minutes
 		programme := provider.Programme{Start: time.Date(year, month, date, hours, minutes, 0, 0, paris)}
 		if title := name.FindStringSubmatch(row); title != nil {
-			programme.Title = text(title[1])
+			programme.Title = provider.PlainText(title[1])
 		}
 		for _, part := range []*regexp.Regexp{episode, about} {
 			if found := part.FindStringSubmatch(row); found != nil {
-				programme.Description = strings.TrimSpace(programme.Description + "\n" + text(found[1]))
+				programme.Description = strings.TrimSpace(programme.Description + "\n" + provider.PlainText(found[1]))
 			}
 		}
 		if src := picture.FindStringSubmatch(row); src != nil && at != nil {
@@ -139,17 +138,6 @@ func broadcast(page string, day time.Time, address string) []provider.Programme 
 		programmes = append(programmes, programme)
 	}
 	return programmes
-}
-
-// text returns the words of a piece of HTML, a paragraph to a line.
-func text(markup string) string {
-	var lines []string
-	for line := range strings.Lines(html.UnescapeString(tag.ReplaceAllString(markup, ""))) {
-		if words := strings.Join(strings.Fields(line), " "); words != "" {
-			lines = append(lines, words)
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 // page fetches a page of the guide.

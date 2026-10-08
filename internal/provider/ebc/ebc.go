@@ -7,7 +7,6 @@ package ebc
 import (
 	"context"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -137,10 +136,7 @@ func (p *Provider) Programmes(ctx context.Context, channels []provider.Channel, 
 
 // row is a line of a day's listing: the time a programme starts at, then its
 // name, mostly as a link to its page.
-var (
-	row = regexp.MustCompile(`(?s)class="date-display-single">(\d\d:\d\d)</span>\s*</div>\s*<div[^>]*nomeprograma">(.*?)</div>`)
-	tag = regexp.MustCompile(`<[^>]*>`)
-)
+var row = regexp.MustCompile(`(?s)class="date-display-single">(\d\d:\d\d)</span>\s*</div>\s*<div[^>]*nomeprograma">(.*?)</div>`)
 
 // listings returns what a channel's guide has between from and to.
 //
@@ -167,7 +163,7 @@ func (p *Provider) listings(ctx context.Context, ch channel, from, to time.Time)
 				continue
 			}
 			programme := provider.Programme{
-				Title: strings.TrimSpace(html.UnescapeString(tag.ReplaceAllString(line[2], ""))),
+				Title: provider.PlainText(line[2]),
 				Start: day.Add(time.Duration(clock.Hour())*time.Hour + time.Duration(clock.Minute())*time.Minute),
 			}
 			if programme.Title == "" {

@@ -118,3 +118,16 @@ func TestUntilNext(t *testing.T) {
 		})
 	}
 }
+
+func TestPlainText(t *testing.T) {
+	tests := []struct{ markup, want string }{
+		{`<a href="/artes">Arte &amp;  Cultura</a>`, "Arte & Cultura"},
+		{"\n\t<p>Lorde Rodolfus <b>reúne</b>\r\n\r\n\r\n  os   vilões.</p>\n", "Lorde Rodolfus reúne\nos vilões."},
+		{"<br>", ""},
+	}
+	for _, test := range tests {
+		if got := PlainText(test.markup); got != test.want {
+			t.Errorf("PlainText(%q) = %q, want %q", test.markup, got, test.want)
+		}
+	}
+}

@@ -1,6 +1,11 @@
 package provider
 
-import "time"
+import (
+	"html"
+	"regexp"
+	"strings"
+	"time"
+)
 
 // block is how long a placeholder lasts in the guide.
 const block = time.Hour
@@ -53,4 +58,18 @@ func UntilNext(channelID string, listed []Programme, from, to time.Time) []Progr
 		}
 	}
 	return programmes
+}
+
+// tag is an HTML tag.
+var tag = regexp.MustCompile(`<[^>]*>`)
+
+// PlainText returns the words of a piece of HTML, a paragraph to a line.
+func PlainText(markup string) string {
+	var lines []string
+	for line := range strings.Lines(html.UnescapeString(tag.ReplaceAllString(markup, ""))) {
+		if words := strings.Join(strings.Fields(line), " "); words != "" {
+			lines = append(lines, words)
+		}
+	}
+	return strings.Join(lines, "\n")
 }

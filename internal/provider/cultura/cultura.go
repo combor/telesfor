@@ -7,7 +7,6 @@ package cultura
 import (
 	"context"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -151,7 +150,6 @@ var (
 	name    = regexp.MustCompile(`(?s)<h3>(.*?)</h3>`)
 	picture = regexp.MustCompile(`<img src="([^"]*)"`)
 	more    = regexp.MustCompile(`(?s)<section class="mais">\s*<section>\s*(?:<h2>(.*?)</h2>)?\s*<div>(.*?)</div>`)
-	tag     = regexp.MustCompile(`<[^>]*>`)
 )
 
 // broadcast reads a day of the guide, which is a day of the broadcast: it
@@ -172,10 +170,10 @@ func broadcast(page string, day time.Time) []provider.Programme {
 			programme.Start = programme.Start.AddDate(0, 0, 1)
 		}
 		if title := name.FindStringSubmatch(entry); title != nil {
-			programme.Title = text(title[1])
+			programme.Title = provider.PlainText(title[1])
 		}
 		if about := more.FindStringSubmatch(entry); about != nil {
-			programme.Description = strings.TrimSpace(text(about[1]) + "\n" + text(about[2]))
+			programme.Description = strings.TrimSpace(provider.PlainText(about[1]) + "\n" + provider.PlainText(about[2]))
 		}
 		// A programme without a picture has one of the site's own in its
 		// place, at an address within the site.
@@ -185,17 +183,6 @@ func broadcast(page string, day time.Time) []provider.Programme {
 		programmes = append(programmes, programme)
 	}
 	return programmes
-}
-
-// text returns the words of a piece of HTML, a paragraph to a line.
-func text(markup string) string {
-	var lines []string
-	for line := range strings.Lines(html.UnescapeString(tag.ReplaceAllString(markup, ""))) {
-		if words := strings.Join(strings.Fields(line), " "); words != "" {
-			lines = append(lines, words)
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 // Stream returns the channel's master playlist, once a look at it finds the

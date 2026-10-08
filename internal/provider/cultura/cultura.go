@@ -195,7 +195,7 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 	}
 	master, at, err := p.playlist(ctx, ch, ch.stream)
 	if err != nil {
-		return provider.Source{}, err
+		return provider.Source{}, fmt.Errorf("cultura: %w", err)
 	}
 	// Whether the stream is encrypted, or has stopped, shows in the playlist
 	// of its one quality.
@@ -206,7 +206,7 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 			return provider.Source{}, fmt.Errorf("cultura: %s is unavailable: %w", ch.name, err)
 		}
 		if media, _, err = p.playlist(ctx, ch, address.String()); err != nil {
-			return provider.Source{}, err
+			return provider.Source{}, fmt.Errorf("cultura: %w", err)
 		}
 	}
 	switch {
@@ -236,11 +236,11 @@ func (p *Provider) playlist(ctx context.Context, ch channel, address string) (st
 	page, at, status, err := p.get(ctx, address)
 	switch {
 	case err != nil:
-		return "", nil, fmt.Errorf("cultura: reaching %s: %w", ch.name, err)
+		return "", nil, fmt.Errorf("reaching %s: %w", ch.name, err)
 	case status != http.StatusOK:
-		return "", nil, fmt.Errorf("cultura: %w", refusal(ch.name, status))
+		return "", nil, refusal(ch.name, status)
 	case !strings.HasPrefix(page, "#EXTM3U"):
-		return "", nil, fmt.Errorf("cultura: %s is unavailable: TV Cultura sends no playlist", ch.name)
+		return "", nil, fmt.Errorf("%s is unavailable: TV Cultura sends no playlist", ch.name)
 	}
 	return page, at, nil
 }

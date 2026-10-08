@@ -178,7 +178,7 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 	for began := time.Now(); ; {
 		stream, err := p.handedOut(ctx, channelID)
 		if err != nil {
-			return provider.Source{}, err
+			return provider.Source{}, fmt.Errorf("tvp: %w", err)
 		}
 		if stream, err = p.serving(ctx, stream); err == nil {
 			return provider.Source{URL: stream, Client: p.client}, nil
@@ -204,13 +204,13 @@ func (p *Provider) handedOut(ctx context.Context, channelID string) (string, err
 	}
 	path := "/" + url.PathEscape(channelID) + "/videos/playlist"
 	if err := p.get(ctx, path, url.Values{"videoType": {"LIVE"}}, &playlist); err != nil {
-		return "", fmt.Errorf("tvp: resolving stream: %w", err)
+		return "", fmt.Errorf("resolving stream: %w", err)
 	}
 	if len(playlist.DRM) > 0 {
-		return "", errors.New("tvp: channel is DRM-protected")
+		return "", errors.New("channel is DRM-protected")
 	}
 	if len(playlist.Sources.HLS) == 0 {
-		return "", errors.New("tvp: channel has no HLS stream")
+		return "", errors.New("channel has no HLS stream")
 	}
 	return playlist.Sources.HLS[0].Src, nil
 }

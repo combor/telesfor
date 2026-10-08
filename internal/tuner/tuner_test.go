@@ -78,7 +78,10 @@ func get(t *testing.T, path string) *httptest.ResponseRecorder {
 }
 
 func TestDiscover(t *testing.T) {
-	var got struct{ BaseURL, LineupURL, DeviceID, FriendlyName string }
+	var got struct {
+		BaseURL, LineupURL, DeviceID, FriendlyName string
+		TunerCount                                 int
+	}
 	if err := json.Unmarshal(get(t, "/discover.json").Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -90,13 +93,16 @@ func TestDiscover(t *testing.T) {
 	if got.DeviceID != "0BADCAFE" || got.FriendlyName != "telesfor Fake" {
 		t.Errorf("discover.json names the device %q, %q", got.DeviceID, got.FriendlyName)
 	}
+	if got.TunerCount != 4 {
+		t.Errorf("discover.json has %d tuners, want 4 of a device that names no number", got.TunerCount)
+	}
 }
 
 // TestTunerAtAPath checks a tuner beside the root's: Plex is given the path as
 // part of the tuner's address, so every URL it is handed has to carry it.
 func TestTunerAtAPath(t *testing.T) {
 	off := false
-	tuner, err := New(t.Context(), fake{off: &off}, nil, Device{ID: "0BADCAFE", Name: "Fake", Path: "/fake", First: 1001})
+	tuner, err := New(t.Context(), fake{off: &off}, nil, Device{ID: "0BADCAFE", Name: "Fake", Path: "/fake", First: 1001, Tuners: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,10 +117,16 @@ func TestTunerAtAPath(t *testing.T) {
 		}
 	}
 
-	var got struct{ BaseURL, LineupURL string }
+	var got struct {
+		BaseURL, LineupURL string
+		TunerCount         int
+	}
 	get("/fake/discover.json", &got)
 	if got.BaseURL != "http://plex.local:5004/fake" || got.LineupURL != "http://plex.local:5004/fake/lineup.json" {
 		t.Errorf("discover.json points at %q and %q, want the tuner's path", got.BaseURL, got.LineupURL)
+	}
+	if got.TunerCount != 3 {
+		t.Errorf("discover.json has %d tuners, want the device's 3", got.TunerCount)
 	}
 	type entry struct{ GuideNumber, GuideName, URL string }
 	var lineup []entry

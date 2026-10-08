@@ -39,6 +39,7 @@ flowchart LR
 | `internal/provider/cultura` | TV Cultura's channels, streams and guide. |
 | `internal/provider/francetv` | France Télévisions' channels, guide and stream URLs. |
 | `internal/provider/tf1` | TF1+'s sign-in, channels, guide and stream URLs. |
+| `internal/provider/wppilot` | WP Pilot's sign-in, channels, guide and stream sessions. |
 | `internal/httpclient` | Connection pools that preserve the supplied HTTP transport settings. |
 | `internal/store` | The bbolt database that keeps sign-ins across restarts. |
 | `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy, startup alignment and the choice of quality. |
@@ -171,9 +172,9 @@ type Provider interface {
 ```
 
 Then give it a tuner in `cmd/telesfor/main.go`: a device ID, a path and a
-range of channel numbers of its own, and the settings it is started with,
-such as its proxy. Each stream returns a `Source` with its URL and the HTTP
-client used to fetch it.
+range of channel numbers of its own, how many streams it plays at once if
+fewer than four, and the settings it is started with, such as its proxy. Each
+stream returns a `Source` with its URL and the HTTP client used to fetch it.
 
 The tuner comes with a tab on the settings page, which shows those settings.
 A provider adds to its tab by implementing more:
@@ -237,6 +238,14 @@ TF1+'s other channels need the same, with a French connection:
 ```sh
 TELESFOR_LIVE=1 TELESFOR_DATA=<data directory> TELESFOR_TF1_PROXY='http://<proxy-host>:<port>' \
   go test -count=1 -v -run TestLive ./internal/provider/tf1
+```
+
+WP Pilot's needs the same, with a Polish connection. It opens three
+channels, which WP Pilot counts as changes of channel:
+
+```sh
+TELESFOR_LIVE=1 TELESFOR_DATA=<data directory> TELESFOR_WPPILOT_PROXY='http://<proxy-host>:<port>' \
+  go test -count=1 -v -run TestLive ./internal/provider/wppilot
 ```
 
 To test the container image, which CI also does on every push:

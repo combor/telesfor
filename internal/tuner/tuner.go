@@ -27,7 +27,7 @@ import (
 	"github.com/combor/telesfor/internal/remux"
 )
 
-const tunerCount = 4 // how many streams Plex may open at once
+const tunerCount = 4 // how many streams Plex may open at once, unless the device says
 
 // Device is what tells one tuner from another.
 type Device struct {
@@ -39,6 +39,10 @@ type Device struct {
 	// of all tuners by number, so ranges that do not overlap keep each
 	// provider's channels together.
 	First int
+
+	// Tuners is how many streams Plex may open at once, for a provider that
+	// plays fewer than four.
+	Tuners int
 }
 
 // Tuner is an http.Handler that emulates an HDHomeRun with the channels of a
@@ -192,7 +196,7 @@ func (t *Tuner) discover(w http.ResponseWriter, r *http.Request) {
 		"FirmwareVersion": "20150826",
 		"DeviceID":        t.device.ID,
 		"DeviceAuth":      "telesfor",
-		"TunerCount":      tunerCount,
+		"TunerCount":      cmp.Or(t.device.Tuners, tunerCount),
 		"BaseURL":         t.URL(r),
 		"LineupURL":       t.URL(r) + "/lineup.json",
 	})

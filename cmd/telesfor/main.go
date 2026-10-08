@@ -22,6 +22,7 @@ import (
 	"github.com/combor/telesfor/internal/provider/globo"
 	"github.com/combor/telesfor/internal/provider/tf1"
 	"github.com/combor/telesfor/internal/provider/tvp"
+	"github.com/combor/telesfor/internal/provider/wppilot"
 	"github.com/combor/telesfor/internal/remux"
 	"github.com/combor/telesfor/internal/store"
 	"github.com/combor/telesfor/internal/tuner"
@@ -46,6 +47,8 @@ func main() {
 		"HTTP proxy for France Télévisions, which blocks most channels outside France (env TELESFOR_FRANCETV_PROXY)")
 	tf1Proxy := flag.String("tf1-proxy", os.Getenv("TELESFOR_TF1_PROXY"),
 		"HTTP proxy for TF1+, which blocks most channels outside France (env TELESFOR_TF1_PROXY)")
+	wppilotProxy := flag.String("wppilot-proxy", os.Getenv("TELESFOR_WPPILOT_PROXY"),
+		"HTTP proxy for WP Pilot, which blocks its channels outside Poland (env TELESFOR_WPPILOT_PROXY)")
 	data := flag.String("data", dataDir(),
 		"directory to keep sign-ins in (env TELESFOR_DATA)")
 	debug := flag.Bool("debug", os.Getenv("TELESFOR_DEBUG") != "",
@@ -69,13 +72,13 @@ func main() {
 	if *debug {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
-	if err := run(*listen, *tvpProxy, *globoProxy, *ebcProxy, *culturaProxy, *francetvProxy, *tf1Proxy, *data, *debug); err != nil {
+	if err := run(*listen, *tvpProxy, *globoProxy, *ebcProxy, *culturaProxy, *francetvProxy, *tf1Proxy, *wppilotProxy, *data, *debug); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(listen, tvpProxy, globoProxy, ebcProxy, culturaProxy, francetvProxy, tf1Proxy, data string, debug bool) error {
+func run(listen, tvpProxy, globoProxy, ebcProxy, culturaProxy, francetvProxy, tf1Proxy, wppilotProxy, data string, debug bool) error {
 	if data == "" {
 		return errors.New("no home directory to keep sign-ins in: set -data")
 	}
@@ -109,6 +112,10 @@ func run(listen, tvpProxy, globoProxy, ebcProxy, culturaProxy, francetvProxy, tf
 	if err != nil {
 		return err
 	}
+	wppilotProvider, err := wppilot.New(wppilotProxy, db)
+	if err != nil {
+		return err
+	}
 
 	// Every TV source plugs in here, with a tuner of its own and the settings
 	// it was started with, for its tab of the settings page. TVP's tuner is at
@@ -130,6 +137,9 @@ func run(listen, tvpProxy, globoProxy, ebcProxy, culturaProxy, francetvProxy, tf
 			[]web.Setting{proxySetting(francetvProxy, "-francetv-proxy", "TELESFOR_FRANCETV_PROXY")}},
 		{tf1Provider, tuner.Device{ID: "7E1E5F09", Name: "TF1+", Path: "/tf1", First: 5001},
 			[]web.Setting{proxySetting(tf1Proxy, "-tf1-proxy", "TELESFOR_TF1_PROXY")}},
+		// WP Pilot plays an account three channels at once.
+		{wppilotProvider, tuner.Device{ID: "7E1E5F0A", Name: "WP Pilot", Path: "/wppilot", First: 6001, Tuners: 3},
+			[]web.Setting{proxySetting(wppilotProxy, "-wppilot-proxy", "TELESFOR_WPPILOT_PROXY")}},
 	}
 
 	remuxer, err := remux.New()

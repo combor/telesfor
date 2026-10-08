@@ -18,6 +18,7 @@ Use command-line flags or environment variables. Flags take precedence.
 | `-cultura-proxy` | `TELESFOR_CULTURA_PROXY` | Unset | HTTP proxy for TV Cultura's guide and streams. |
 | `-francetv-proxy` | `TELESFOR_FRANCETV_PROXY` | Unset | HTTP proxy for France Télévisions' guide and streams. |
 | `-tf1-proxy` | `TELESFOR_TF1_PROXY` | Unset | HTTP proxy for TF1+'s sign-in, guide and streams. |
+| `-wppilot-proxy` | `TELESFOR_WPPILOT_PROXY` | Unset | HTTP proxy for WP Pilot's sign-in, guide and streams. |
 | `-data` | `TELESFOR_DATA` | `telesfor` in your user configuration directory | Directory that keeps the sign-ins to providers. |
 | `-debug` | `TELESFOR_DEBUG` | Off | Log requests, upstream fetches and ffmpeg warnings. |
 | `-version` | | | Print the version and exit. |
@@ -131,6 +132,41 @@ The guide is the one TF1 publishes for the press. It has the night as one
 programme, and nothing for LCI, whose guide has the channel's name on every
 hour, as an EBC channel without a guide has.
 
+### WP Pilot
+
+WP Pilot gives a free account Polsat, TV 4, Telewizja WP and about thirty
+channels more. To sign in, open the **WP Pilot** tab of the
+[settings page](#web-interface) and choose **Sign in**. telesfor shows a
+code. Enter it at the address shown, signed in to your WP Pilot account
+there, within fifteen minutes.
+
+WP Pilot plays a free account nothing until it has accepted the consents at
+`pilot.wp.pl/ustawienia/zgody-rodo/`. The settings page says so while they
+are missing.
+
+The channels then appear on WP Pilot's tuner, ready to
+[add to Plex](../README.md#connect-plex). The sign-in is kept in the data
+directory, so it outlasts restarts. If WP stops accepting it, the settings
+page says so, and you sign in again there.
+
+The tuner has the channels WP Pilot lists as free for the account, without
+its radio stations and without TVP's, which TVP's own tuner has. WP's list
+does not tell which of them are DRM-protected: such a channel leaves the
+tuner the first time it is tuned, until you sign out. Most channels come in
+576p, a few in 1080p.
+
+WP Pilot plays only in Poland. From abroad, set `-wppilot-proxy` to an HTTP
+proxy that exits there. It refuses some channels, TVN among them, to the
+addresses of VPNs.
+
+An account plays three channels at once, on telesfor and in WP Pilot's own
+apps together. A channel that plays on telesfor stops if the same channel is
+opened and then closed elsewhere on the account. WP Pilot also counts the
+changes of channel a free account makes, and starts it with 250.
+
+The guide reaches about half a day ahead. Beyond that it has the channel's
+name on every hour, as an EBC channel without a guide has.
+
 ## Build from source
 
 Install the Go version listed in [go.mod](../go.mod), or a newer version, and
@@ -197,8 +233,8 @@ The addresses are where your browser reached telesfor. Behind a reverse
 proxy, they are where the proxy reaches it.
 
 The page asks for no sign-in to telesfor itself: anyone who can reach
-telesfor can open it, and sign Globoplay or TF1+ in or out. It never shows
-the accounts, and leaves out a proxy's user name and password.
+telesfor can open it, and sign Globoplay, TF1+ or WP Pilot in or out. It
+never shows the accounts, and leaves out a proxy's user name and password.
 
 ## Troubleshooting
 
@@ -209,6 +245,7 @@ the accounts, and leaves out a proxy's user name and password.
 | Some channels will not play | Check the log for the reason. A region block needs a connection in the provider's country; DRM-protected channels are not supported. |
 | Globoplay has no channels | Sign in on the settings page. See [Globoplay](#globoplay). |
 | TF1+ has LCI only | Sign in on the settings page. See [TF1+](#tf1). |
+| WP Pilot has no channels | Sign in on the settings page. See [WP Pilot](#wp-pilot). |
 | An EBC or TV Cultura channel is unavailable | The broadcaster is not streaming it at the moment. A proxy or an account will not bring it back. |
 | Plex shows a playback error after its DVR was set up again | Quit and reopen the Plex app. |
 | The guide is missing | Check that `http://<telesfor-host>:5004/xmltv.xml` is reachable from Plex and selected as its XMLTV guide. |
@@ -216,8 +253,9 @@ the accounts, and leaves out a proxy's user name and password.
 
 Use `/discover.json` to check the tuner, `/lineup.json` to see the channels,
 or `/xmltv.xml` for the guide. Globoplay's are under `/globo`, EBC's under
-`/ebc`, TV Cultura's under `/cultura`, france.tv's under `/francetv` and
-TF1+'s under `/tf1`. If you changed the port, update these addresses too.
+`/ebc`, TV Cultura's under `/cultura`, france.tv's under `/francetv`, TF1+'s
+under `/tf1` and WP Pilot's under `/wppilot`. If you changed the port, update
+these addresses too.
 
 ### Reading the log
 

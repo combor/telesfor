@@ -84,20 +84,7 @@ func (p *Provider) listings(ctx context.Context, ch channel, from, to time.Time)
 		}
 		listed = append(listed, broadcast(page, day, address)...)
 	}
-
-	var programmes []provider.Programme
-	for i := 0; i < len(listed)-1; i++ {
-		programme := listed[i]
-		programme.ChannelID, programme.Stop = ch.id, listed[i+1].Start
-		// A day or more until the next programme is a day the guide lacks:
-		// when this one ends is not known.
-		if programme.Title == "" || !programme.Stop.After(programme.Start) || programme.Stop.Sub(programme.Start) >= 24*time.Hour ||
-			!programme.Stop.After(from) || !programme.Start.Before(to) {
-			continue
-		}
-		programmes = append(programmes, programme)
-	}
-	return programmes, nil
+	return provider.UntilNext(ch.id, listed, from, to), nil
 }
 
 // What a day of the guide has of a programme: the time it starts at, its

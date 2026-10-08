@@ -148,11 +148,7 @@ var (
 // So a programme runs until the next one starts, which for the last of a day
 // is the first of the next. That takes the days around those asked for.
 func (p *Provider) listings(ctx context.Context, ch channel, from, to time.Time) ([]provider.Programme, error) {
-	type slot struct {
-		start time.Time
-		title string
-	}
-	var slots []slot
+	var listed []provider.Programme
 	year, month, day := from.In(brt).Date()
 	first, last := time.Date(year, month, day-1, 0, 0, 0, 0, brt), to.AddDate(0, 0, 1)
 	for day := first; !day.After(last); day = day.AddDate(0, 0, 1) {
@@ -170,28 +166,17 @@ func (p *Provider) listings(ctx context.Context, ch channel, from, to time.Time)
 			if err != nil {
 				continue
 			}
-			slots = append(slots, slot{
-				start: day.Add(time.Duration(clock.Hour())*time.Hour + time.Duration(clock.Minute())*time.Minute),
-				title: strings.TrimSpace(html.UnescapeString(tag.ReplaceAllString(line[2], ""))),
-			})
+			programme := provider.Programme{
+				Title: strings.TrimSpace(html.UnescapeString(tag.ReplaceAllString(line[2], ""))),
+				Start: day.Add(time.Duration(clock.Hour())*time.Hour + time.Duration(clock.Minute())*time.Minute),
+			}
+			if programme.Title == "" {
+				programme.Title, programme.Description = ch.name, unnamed
+			}
+			listed = append(listed, programme)
 		}
 	}
-
-	var programmes []provider.Programme
-	for i := 0; i < len(slots)-1; i++ {
-		start, stop := slots[i].start, slots[i+1].start
-		// A day or more until the next programme is a day the guide lacks:
-		// when this one ends is not known.
-		if !stop.After(start) || stop.Sub(start) >= 24*time.Hour || !stop.After(from) || !start.Before(to) {
-			continue
-		}
-		programme := provider.Programme{ChannelID: ch.id, Title: slots[i].title, Start: start, Stop: stop}
-		if programme.Title == "" {
-			programme.Title, programme.Description = ch.name, unnamed
-		}
-		programmes = append(programmes, programme)
-	}
-	return programmes, nil
+	return provider.UntilNext(ch.id, listed, from, to), nil
 }
 
 // Stream returns the channel's master playlist, once a look at it finds the

@@ -78,3 +78,43 @@ func TestFill(t *testing.T) {
 		})
 	}
 }
+
+func TestUntilNext(t *testing.T) {
+	listed := []Programme{
+		{Title: "Early", Start: clock(6, 0)},
+		{Title: "Morning", Start: clock(8, 0)},
+		{Start: clock(10, 0)},                   // nothing listed
+		{Title: "Trailer", Start: clock(12, 0)}, // over as it starts
+		{Title: "Lunch", Description: "Soup", Image: "lunch.jpg", Start: clock(12, 0)},
+		{Title: "Evening", Start: clock(13, 0)}, // the guide lacks the day after
+		{Title: "Tuesday", Start: clock(24+13, 0)},
+		{Title: "Last", Start: clock(24+14, 0)},
+	}
+	tests := []struct {
+		name     string
+		from, to time.Time
+		want     []string
+	}{
+		{"two days", clock(9, 0), clock(24+15, 0), []string{
+			"one Mon 08:00 to Mon 10:00: Morning",
+			"one Mon 12:00 to Mon 13:00: Lunch | Soup",
+			"one Tue 13:00 to Tue 14:00: Tuesday",
+		}},
+		{"a morning", clock(9, 0), clock(12, 0), []string{
+			"one Mon 08:00 to Mon 10:00: Morning",
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			programmes := UntilNext("one", listed, test.from, test.to)
+			if got := shown(programmes); !slices.Equal(got, test.want) {
+				t.Errorf("UntilNext():\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(test.want, "\n"))
+			}
+			for _, programme := range programmes {
+				if programme.Title == "Lunch" && programme.Image != "lunch.jpg" {
+					t.Errorf("Lunch has the picture %q, want the guide's", programme.Image)
+				}
+			}
+		})
+	}
+}

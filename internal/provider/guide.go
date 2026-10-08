@@ -36,3 +36,21 @@ func Fill(ch Channel, known []Programme, from, to time.Time, unlisted string) []
 	until(to)
 	return programmes
 }
+
+// UntilNext ends each programme of a guide that gives only their starts where
+// the next one starts, and keeps those on between from and to, as the
+// channel's. A day or more until the next is a day the guide lacks, and one
+// without a title is time with nothing listed: neither is kept, and nor is
+// the last, which has no next.
+func UntilNext(channelID string, listed []Programme, from, to time.Time) []Programme {
+	var programmes []Programme
+	for i := 0; i < len(listed)-1; i++ {
+		programme := listed[i]
+		programme.ChannelID, programme.Stop = channelID, listed[i+1].Start
+		length := programme.Stop.Sub(programme.Start)
+		if programme.Title != "" && length > 0 && length < 24*time.Hour && programme.Stop.After(from) && programme.Start.Before(to) {
+			programmes = append(programmes, programme)
+		}
+	}
+	return programmes
+}

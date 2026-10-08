@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -190,7 +189,7 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 	// Whether the stream is encrypted, or has stopped, shows in the playlist
 	// of a quality: the best, which is the one most likely to be played.
 	media := master
-	if uri := quality(master); uri != "" {
+	if uri := provider.BestQuality(master); uri != "" {
 		address, err := at.Parse(uri)
 		if err != nil {
 			return provider.Source{}, fmt.Errorf("ebc: %s is unavailable: %w", ch.name, err)
@@ -217,27 +216,6 @@ func (p *Provider) find(id string) (channel, bool) {
 		return channel{}, false
 	}
 	return p.channels[i], true
-}
-
-// quality returns the URI of the highest quality in a master playlist, or ""
-// for a playlist that is not one.
-func quality(master string) (uri string) {
-	lines := strings.Split(master, "\n")
-	most := -1
-	for i, line := range lines {
-		attributes, ok := strings.CutPrefix(line, "#EXT-X-STREAM-INF:")
-		if !ok || i+1 >= len(lines) {
-			continue
-		}
-		for attribute := range strings.SplitSeq(attributes, ",") {
-			if bandwidth, ok := strings.CutPrefix(attribute, "BANDWIDTH="); ok {
-				if n, _ := strconv.Atoi(strings.TrimSpace(bandwidth)); n > most {
-					most, uri = n, strings.TrimSpace(lines[i+1])
-				}
-			}
-		}
-	}
-	return uri
 }
 
 // playlist fetches an HLS playlist of a channel, and returns it with the

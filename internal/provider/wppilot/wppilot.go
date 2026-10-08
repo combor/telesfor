@@ -338,8 +338,8 @@ func (p *Provider) open(ctx context.Context, signedIn *account, ch channel) (ses
 	return opened, nil
 }
 
-// encrypted tells whether a stream is DRM-protected, by the playlist of its
-// first quality.
+// encrypted tells whether a stream is DRM-protected, by its master playlist
+// and the playlist of its best quality.
 func (p *Provider) encrypted(ctx context.Context, master string) (bool, error) {
 	fetch := func(address string) (string, *http.Response, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
@@ -361,19 +361,16 @@ func (p *Provider) encrypted(ctx context.Context, master string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	for line := range strings.Lines(playlists) {
-		if uri := strings.TrimSpace(line); uri != "" && !strings.HasPrefix(uri, "#") {
-			address, err := resp.Request.URL.Parse(uri)
-			if err != nil {
-				return false, err
-			}
-			quality, _, err := fetch(address.String())
-			if err != nil {
-				return false, err
-			}
-			playlists += quality
-			break
+	if uri := provider.BestQuality(playlists); uri != "" {
+		address, err := resp.Request.URL.Parse(uri)
+		if err != nil {
+			return false, err
 		}
+		quality, _, err := fetch(address.String())
+		if err != nil {
+			return false, err
+		}
+		playlists += quality
 	}
 	// AES-128 is no obstacle: its key is there for ffmpeg to fetch.
 	return strings.Contains(playlists, "METHOD=SAMPLE-AES"), nil

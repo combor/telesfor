@@ -460,7 +460,7 @@ func (p *Provider) stream(ctx context.Context, ch channel) (provider.Source, err
 	// Whether the stream is encrypted, has stopped or is kept from this
 	// address shows in its one quality: the playlists are handed out
 	// anywhere, the picture and the sound are not.
-	quality := best(master)
+	quality := provider.BestQuality(master)
 	media, within := master, at
 	if quality != "" {
 		if within, err = at.Parse(quality); err != nil {
@@ -637,27 +637,6 @@ func (p *Provider) playlist(ctx context.Context, ch channel, address *url.URL) (
 		return "", fmt.Errorf("%s is unavailable: France Télévisions sends no playlist", ch.name)
 	}
 	return string(body), nil
-}
-
-// best returns the URI of the highest quality in a master playlist, which is
-// empty for a playlist that is not a master.
-func best(master string) (quality string) {
-	lines := strings.Split(master, "\n")
-	most := -1
-	for i, line := range lines {
-		attributes, ok := strings.CutPrefix(line, "#EXT-X-STREAM-INF:")
-		if !ok || i+1 >= len(lines) {
-			continue
-		}
-		for attribute := range strings.SplitSeq(attributes, ",") {
-			if bandwidth, ok := strings.CutPrefix(attribute, "BANDWIDTH="); ok {
-				if n, _ := strconv.Atoi(strings.TrimSpace(bandwidth)); n > most {
-					most, quality = n, strings.TrimSpace(lines[i+1])
-				}
-			}
-		}
-	}
-	return quality
 }
 
 // session is the transport of a stream's HTTP client, which the stream is

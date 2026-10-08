@@ -200,7 +200,7 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 	// Whether the stream is encrypted, or has stopped, shows in the playlist
 	// of its one quality.
 	media := master
-	if uri := quality(master); uri != "" {
+	if uri := provider.BestQuality(master); uri != "" {
 		address, err := at.Parse(uri)
 		if err != nil {
 			return provider.Source{}, fmt.Errorf("cultura: %s is unavailable: %w", ch.name, err)
@@ -228,22 +228,6 @@ func (p *Provider) find(id string) (channel, bool) {
 		return channel{}, false
 	}
 	return p.channels[i], true
-}
-
-// quality returns the URI of the first quality in a master playlist, which is
-// the only one in a channel's, or "" for a playlist that is not one.
-func quality(master string) string {
-	listed := false // the line before announced a quality
-	for line := range strings.Lines(master) {
-		line = strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
-			listed = true
-		case listed && line != "" && !strings.HasPrefix(line, "#"):
-			return line
-		}
-	}
-	return ""
 }
 
 // playlist fetches an HLS playlist of a channel, and returns it with the

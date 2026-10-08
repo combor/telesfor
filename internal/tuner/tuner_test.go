@@ -261,7 +261,7 @@ type counting struct {
 	fake
 	broken  atomic.Bool
 	fetches atomic.Int32
-	fetched chan struct{}
+	fetched chan struct{} // roomier than any test's fetches: a full one would wedge the fetcher, which sends holding t.fetching
 }
 
 func (c *counting) Programmes(ctx context.Context, channels []provider.Channel, from, to time.Time) ([]provider.Programme, error) {
@@ -322,11 +322,37 @@ func TestGuideOutlivesItsSource(t *testing.T) {
 	tuner.guide.Store(&aged)
 	tuner.nudge <- struct{}{}
 	<-p.fetched // the fetch that failed
+	// The token comes as the fetch begins. Whatever the failure does to the
+	// cache is done once the fetcher lets go of the lock.
+	tuner.fetching.Lock()
+	tuner.fetching.Unlock()
 
 	response := askGuide(t, tuner)
 	var guide xmlTV
 	if err := xml.Unmarshal(response.Body.Bytes(), &guide); err != nil || len(guide.Programmes) != 2 {
 		t.Errorf("xmltv.xml while the source is down = %d %s, %v: want the guide fetched before", response.Code, response.Body, err)
+	}
+}
+
+// TestScanRefreshesTheGuide checks that a scan alone has the guide fetched
+// anew, before any request: Plex is not kept waiting after an account change.
+func TestScanRefreshesTheGuide(t *testing.T) {
+	p := &counting{fetched: make(chan struct{}, 8)}
+	tuner, err := New(t.Context(), p, nil, device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-p.fetched // the fetch that filled the cache
+	if err := tuner.Scan(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-p.fetched:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no guide fetch within 5s of a scan")
+	}
+	if n := p.fetches.Load(); n != 2 {
+		t.Errorf("a scan fetched the guide %d times, want once", n)
 	}
 }
 

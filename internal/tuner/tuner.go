@@ -115,7 +115,7 @@ func (t *Tuner) Scan(ctx context.Context) error {
 	}
 	t.lineup.Store(&lineup)
 	// The guide names channels by their lineup numbers: nudge keepFresh to
-	// fetch it anew. On a Tuner made without New nothing listens, or sends.
+	// fetch it anew. On a Tuner made without New, nothing listens, or sends.
 	select {
 	case t.nudge <- struct{}{}:
 	default: // a nudge is pending already

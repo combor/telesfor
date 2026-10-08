@@ -6,7 +6,6 @@ import (
 	"encoding/xml"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/combor/telesfor/internal/provider"
@@ -16,7 +15,8 @@ import (
 const guideSpan = 48 * time.Hour
 
 // The guide is fetched ahead of Plex asking for it: anew every guideRefresh,
-// and after guideRetry when a fetch failed.
+// and after guideRetry when a fetch failed, waiting twice as long each
+// failure in a row, up to guideRefresh.
 const (
 	guideRefresh = 6 * time.Hour
 	guideRetry   = 10 * time.Minute
@@ -75,7 +75,6 @@ func (t *Tuner) xmltv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	w.Header().Set("Content-Length", strconv.Itoa(len(document)))
 	w.Write(document)
 }
 
@@ -100,16 +99,19 @@ func (t *Tuner) guideDocument(ctx context.Context) ([]byte, error) {
 // of the clock. It runs until ctx ends.
 //
 // A fetch that fails leaves the guide there was, which Plex is given rather
-// than nothing, and is tried again sooner.
+// than nothing, and is tried again sooner: see guideRetry.
 func (t *Tuner) keepFresh(ctx context.Context) {
-	for {
+	for retry := guideRetry; ; {
 		t.fetching.Lock()
 		wait := guideRefresh
 		if g := t.guide.Load(); g != nil && g.lineup == t.lineup.Load() && time.Since(g.made) < guideRefresh {
-			wait = guideRefresh - time.Since(g.made) // fetched meanwhile, by a request perhaps
+			wait = guideRefresh - time.Since(g.made) // fetched meanwhile, by a request or an earlier pass
 		} else if _, err := t.fetchGuide(ctx); err != nil && ctx.Err() == nil {
 			slog.Error("guide refresh failed", "provider", t.provider.Name(), "err", err)
-			wait = guideRetry
+			// A source that stays down is asked less and less often.
+			wait, retry = retry, min(2*retry, guideRefresh)
+		} else {
+			retry = guideRetry
 		}
 		t.fetching.Unlock()
 		select {

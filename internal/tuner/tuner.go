@@ -49,7 +49,7 @@ type Tuner struct {
 	mux      *http.ServeMux
 	scanning sync.Mutex                // one Scan at a time
 	lineup   atomic.Pointer[[]channel] // replaced whole by Scan
-	fetching sync.Mutex                // one guide fetch at a time
+	fetching chan struct{}             // a token held while a guide is fetched: one fetch at a time
 	guide    atomic.Pointer[guide]     // replaced whole by fetchGuide
 	nudge    chan struct{}             // pokes keepFresh after a Scan
 }
@@ -64,7 +64,8 @@ type channel struct {
 // New returns a tuner that offers the channels of p. Until ctx ends, it
 // keeps the guide fetched ahead of Plex asking for it: see keepFresh.
 func New(ctx context.Context, p provider.Provider, remuxer *remux.Remuxer, device Device) (*Tuner, error) {
-	t := &Tuner{provider: p, device: device, remux: remuxer, mux: http.NewServeMux(), nudge: make(chan struct{}, 1)}
+	t := &Tuner{provider: p, device: device, remux: remuxer, mux: http.NewServeMux(),
+		fetching: make(chan struct{}, 1), nudge: make(chan struct{}, 1)}
 	if err := t.Scan(ctx); err != nil {
 		return nil, err
 	}

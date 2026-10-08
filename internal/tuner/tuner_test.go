@@ -322,15 +322,63 @@ func TestGuideOutlivesItsSource(t *testing.T) {
 	tuner.guide.Store(&aged)
 	tuner.nudge <- struct{}{}
 	<-p.fetched // the fetch that failed
-	// The token comes as the fetch begins. Whatever the failure does to the
-	// cache is done once the fetcher lets go of the lock.
-	tuner.fetching.Lock()
-	tuner.fetching.Unlock()
+	// The word comes as the fetch begins. Whatever the failure does to the
+	// cache is done once the fetcher gives the token back.
+	tuner.fetching <- struct{}{}
+	<-tuner.fetching
 
 	response := askGuide(t, tuner)
 	var guide xmlTV
 	if err := xml.Unmarshal(response.Body.Bytes(), &guide); err != nil || len(guide.Programmes) != 2 {
 		t.Errorf("xmltv.xml while the source is down = %d %s, %v: want the guide fetched before", response.Code, response.Body, err)
+	}
+}
+
+// stuck is a provider whose guide fetch tells when it is entered, then blocks
+// until the test releases it or its context ends.
+type stuck struct {
+	fake
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *stuck) Programmes(ctx context.Context, _ []provider.Channel, _, _ time.Time) ([]provider.Programme, error) {
+	s.entered <- struct{}{}
+	select {
+	case <-s.release:
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// TestCancelledGuideRequestIsNotKeptWaiting asks for the guide, with the
+// request cancelled already, while the first fetch is still at the provider.
+// The viewer is gone: the request must return, not wait the fetch out.
+func TestCancelledGuideRequestIsNotKeptWaiting(t *testing.T) {
+	p := &stuck{entered: make(chan struct{}, 8), release: make(chan struct{})}
+	defer close(p.release)
+	tuner, err := New(t.Context(), p, nil, device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-p.entered // the first fetch is in flight
+
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	returned := make(chan int, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		tuner.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://plex.local:5004/xmltv.xml", nil).WithContext(cancelled))
+		returned <- recorder.Code
+	}()
+	select {
+	case code := <-returned:
+		if code != http.StatusBadGateway {
+			t.Errorf("cancelled request was answered %d, want 502", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a cancelled request is kept waiting for the fetch in flight")
 	}
 }
 

@@ -85,8 +85,12 @@ func (t *Tuner) guideDocument(ctx context.Context) ([]byte, error) {
 	if g := t.guide.Load(); g != nil && g.lineup == t.lineup.Load() {
 		return g.document, nil
 	}
-	t.fetching.Lock()
-	defer t.fetching.Unlock()
+	select {
+	case t.fetching <- struct{}{}:
+	case <-ctx.Done(): // a viewer that is gone waits for nothing
+		return nil, ctx.Err()
+	}
+	defer func() { <-t.fetching }()
 	if g := t.guide.Load(); g != nil && g.lineup == t.lineup.Load() {
 		return g.document, nil // fetched while this request waited
 	}
@@ -102,7 +106,11 @@ func (t *Tuner) guideDocument(ctx context.Context) ([]byte, error) {
 // than nothing, and is tried again sooner: see guideRetry.
 func (t *Tuner) keepFresh(ctx context.Context) {
 	for retry := guideRetry; ; {
-		t.fetching.Lock()
+		select {
+		case t.fetching <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
 		wait := guideRefresh
 		if g := t.guide.Load(); g != nil && g.lineup == t.lineup.Load() && time.Since(g.made) < guideRefresh {
 			wait = guideRefresh - time.Since(g.made) // fetched meanwhile, by a request or an earlier pass
@@ -113,7 +121,7 @@ func (t *Tuner) keepFresh(ctx context.Context) {
 		} else {
 			retry = guideRetry
 		}
-		t.fetching.Unlock()
+		<-t.fetching
 		select {
 		case <-ctx.Done():
 			return
@@ -124,7 +132,8 @@ func (t *Tuner) keepFresh(ctx context.Context) {
 }
 
 // fetchGuide asks the provider for the programmes of the whole lineup,
-// renders the XMLTV document and caches it. The caller holds t.fetching.
+// renders the XMLTV document and caches it. The caller holds the t.fetching
+// token.
 //
 // Channels are identified by their lineup number, so the guide and the lineup
 // always agree on which channel is which.

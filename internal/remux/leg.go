@@ -44,22 +44,6 @@ func (l *leg) track(video bool) *track {
 
 func (t *track) placed() bool { return t.from >= 0 }
 
-func (t *track) within(seq int64) bool { return t.until < 0 || seq < t.until }
-
-// complete tells whether the playlist lists the whole leg.
-func (t *track) complete() bool { return t.until >= 0 && t.list.next() >= t.until }
-
-// listFrom is where the playlist ffmpeg is given begins. ffmpeg asks for a
-// segment while it still reads the one before, and skips what it reads if the
-// playlist no longer lists it.
-func (t *track) listFrom() int64 {
-	last := t.asked
-	if t.until >= 0 {
-		last = min(t.asked, t.until-1)
-	}
-	return max(t.from, last-1)
-}
-
 // begin starts the first leg, in the given quality.
 func (s *stage) begin(quality int) (*leg, error) {
 	s.mu.Lock()

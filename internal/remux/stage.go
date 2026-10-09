@@ -150,7 +150,7 @@ func (s *stage) playlist(w http.ResponseWriter, req *http.Request, video bool) {
 	// begins waits for its first segment to be listed.
 	for waited := time.Duration(0); ; {
 		s.mu.Lock()
-		complete := t.complete()
+		complete := t.until >= 0 && t.list.next() >= t.until
 		s.mu.Unlock()
 		if complete {
 			break
@@ -207,7 +207,13 @@ func (s *stage) playlist(w http.ResponseWriter, req *http.Request, video bool) {
 // rewrite writes the playlist of a track as ffmpeg is given it. The caller
 // holds the lock.
 func (s *stage) rewrite(t *track, letter string) string {
-	return t.list.write(t.listFrom(), t.until, max(t.from, 0), t.complete(), func(kind string, seq int64, uri string) string {
+	// ffmpeg asks for a segment while it still reads the one before, and
+	// skips what it reads if the playlist no longer lists it.
+	from := max(t.from, t.asked-1)
+	if t.until >= 0 {
+		from = max(t.from, min(t.asked, t.until-1)-1)
+	}
+	return t.list.write(from, t.until, max(t.from, 0), t.until >= 0 && t.list.next() >= t.until, func(kind string, seq int64, uri string) string {
 		u, err := url.Parse(uri)
 		if err != nil {
 			return uri
@@ -261,7 +267,7 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 	t := l.track(video)
 	s.mu.Lock()
 	wanted, listed := t.list.find(seq)
-	if listed = listed && t.within(seq); listed {
+	if listed = listed && (t.until < 0 || seq < t.until); listed {
 		t.asked = max(t.asked, seq)
 	}
 	newest := seq >= t.list.next()-1 // ffmpeg has caught up with the stream
@@ -276,7 +282,7 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 	give := func() bool {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if !t.within(seq) {
+		if t.until >= 0 && seq >= t.until {
 			return false
 		}
 		t.started = max(t.started, seq)

@@ -34,8 +34,7 @@ func parse(base *template.Template, names ...string) *template.Template {
 }
 
 // Handler serves the interface under /ui/. Like the tuners it is open to
-// whoever can reach it, and all it lets them change is a provider's sign-in
-// and the settings the provider brings itself.
+// whoever can reach it, and all it lets them change is a provider's sign-in.
 type Handler struct {
 	Providers []Provider // a tab for each
 	Settings  []Setting  // telesfor's own, as it was started with
@@ -51,7 +50,7 @@ type Provider struct {
 
 // Register adds the interface's routes to mux.
 func (h *Handler) Register(mux *http.ServeMux) {
-	// A page of another site must not sign anyone in or out, or change a setting.
+	// A page of another site must not sign anyone in or out.
 	sameOrigin := http.NewCrossOriginProtection()
 	mux.Handle("GET /{$}", http.RedirectHandler("/ui/", http.StatusSeeOther))
 	mux.Handle("GET /ui/{$}", secure(http.HandlerFunc(h.providerTab)))
@@ -61,7 +60,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /ui/settings", http.RedirectHandler("/ui/", http.StatusSeeOther))
 	mux.Handle("POST /ui/providers/{provider}/sign-in", sameOrigin.Handler(http.HandlerFunc(h.signIn)))
 	mux.Handle("POST /ui/providers/{provider}/sign-out", sameOrigin.Handler(http.HandlerFunc(h.signOut)))
-	mux.Handle("POST /ui/providers/{provider}/settings", sameOrigin.Handler(http.HandlerFunc(h.configure)))
 	mux.Handle("GET /ui/static/", secure(http.StripPrefix("/ui/static/", staticFiles())))
 }
 

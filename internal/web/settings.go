@@ -1,8 +1,6 @@
 package web
 
 import (
-	"context"
-	"html/template"
 	"log/slog"
 	"net"
 	"net/http"
@@ -108,12 +106,10 @@ func (h *Handler) frame(path string) frame {
 type providerView struct {
 	frame
 	Name     string
-	Tuner    string        // the address Plex adds the tuner by
-	Guide    string        // the XMLTV guide's address
-	Account  *accountView  // nil if the provider needs no account
-	Own      template.HTML // the settings the provider brings itself, if any
-	Problem  string        // in place of Own, when it can't be shown
-	Settings []Setting     // of the provider, as telesfor was started with
+	Tuner    string       // the address Plex adds the tuner by
+	Guide    string       // the XMLTV guide's address
+	Account  *accountView // nil if the provider needs no account
+	Settings []Setting    // of the provider, as telesfor was started with
 	Channels []tuner.Station
 }
 
@@ -191,13 +187,6 @@ func (h *Handler) providerTab(w http.ResponseWriter, r *http.Request) {
 	if account, ok := t.Provider().(provider.Account); ok {
 		view.Account = &accountView{account.Login()}
 	}
-	if own, ok := t.Provider().(provider.Settings); ok {
-		var err error
-		if view.Own, err = own.SettingsHTML(view.Path() + "/settings"); err != nil {
-			slog.Error("rendering a provider's settings", "provider", own.Name(), "err", err)
-			view.Own, view.Problem = "", t.Name()+"’s own settings can’t be shown. telesfor’s log has the reason."
-		}
-	}
 	render(w, r, providerPage, view)
 }
 
@@ -250,30 +239,4 @@ func (h *Handler) signOut(w http.ResponseWriter, r *http.Request) {
 		slog.Error("sign-out failed", "err", err)
 	}
 	http.Redirect(w, r, tabPath(account), http.StatusSeeOther)
-}
-
-// configure hands a provider what a form of its own settings sent, then asks
-// for its channels again. The tab shows what came of it.
-func (h *Handler) configure(w http.ResponseWriter, r *http.Request) {
-	var own provider.Settings
-	p, ok := h.find(r)
-	if ok {
-		own, ok = p.Tuner.Provider().(provider.Settings)
-	}
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "can't read the form", http.StatusBadRequest)
-		return
-	}
-	// The settings are taken whole, even if the user leaves meanwhile.
-	ctx := context.WithoutCancel(r.Context())
-	if err := own.Configure(ctx, r.PostForm); err != nil {
-		slog.Error("changing a provider's settings", "provider", own.Name(), "err", err)
-	} else if err := p.Tuner.Scan(ctx); err != nil {
-		slog.Error("scan failed", "provider", own.Name(), "err", err)
-	}
-	http.Redirect(w, r, tabPath(own), http.StatusSeeOther)
 }

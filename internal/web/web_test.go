@@ -3,12 +3,9 @@ package web
 import (
 	"bytes"
 	"context"
-	"errors"
-	"html/template"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -34,27 +31,20 @@ func (fake) Stream(context.Context, string) (provider.Source, error) {
 	return provider.Source{}, nil
 }
 
-// club is a provider with an account, and a channel for whoever has signed
-// in. It brings a setting of its own as well: a lounge, which is a channel more.
+// club is a provider with an account, and a channel for whoever has signed in.
 type club struct {
 	fake
 	login   provider.Login
 	changed func()
-	lounge  string
-	broken  error // why its settings can't be shown
 }
 
 func (*club) Name() string { return "club" }
 
 func (c *club) Channels(context.Context) ([]provider.Channel, error) {
-	var channels []provider.Channel
-	if c.login.State == provider.SignedIn {
-		channels = append(channels, provider.Channel{ID: "members", Name: "Members"})
+	if c.login.State != provider.SignedIn {
+		return nil, nil
 	}
-	if c.lounge != "" {
-		channels = append(channels, provider.Channel{ID: "lounge", Name: c.lounge + " lounge"})
-	}
-	return channels, nil
+	return []provider.Channel{{ID: "members", Name: "Members"}}, nil
 }
 
 func (c *club) SignIn(context.Context) error {
@@ -71,16 +61,6 @@ func (c *club) SignOut() error {
 func (c *club) Login() provider.Login { return c.login }
 
 func (c *club) OnChange(changed func()) { c.changed = changed }
-
-func (c *club) SettingsHTML(action string) (template.HTML, error) {
-	return template.HTML(`<form method="post" action="` + action + `"><input name="lounge" value="` +
-		template.HTMLEscapeString(c.lounge) + `"><button class="button">Save</button></form>`), c.broken
-}
-
-func (c *club) Configure(_ context.Context, form url.Values) error {
-	c.lounge = form.Get("lounge")
-	return nil
-}
 
 // newUI serves the interface beside the tuners of the fake provider and of
 // the club, the way main does.
@@ -124,19 +104,18 @@ type response struct {
 // and its value.
 func get(t *testing.T, server *httptest.Server, path string, header ...string) response {
 	t.Helper()
-	return request(t, server, http.MethodGet, path, nil, header...)
+	return request(t, server, http.MethodGet, path, header...)
 }
 
-// post sends a form, which may be nil, the way get fetches.
-func post(t *testing.T, server *httptest.Server, path string, form url.Values, header ...string) response {
+// post posts to a path the way get fetches it.
+func post(t *testing.T, server *httptest.Server, path string, header ...string) response {
 	t.Helper()
-	return request(t, server, http.MethodPost, path, strings.NewReader(form.Encode()),
-		append(header, "Content-Type", "application/x-www-form-urlencoded")...)
+	return request(t, server, http.MethodPost, path, header...)
 }
 
-func request(t *testing.T, server *httptest.Server, method, path string, body io.Reader, header ...string) response {
+func request(t *testing.T, server *httptest.Server, method, path string, header ...string) response {
 	t.Helper()
-	req, err := http.NewRequest(method, server.URL+path, body)
+	req, err := http.NewRequest(method, server.URL+path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +207,6 @@ func TestTabs(t *testing.T) {
 		`>Account</h2>`,
 		`<span class="badge">Signed out</span>`,
 		`<form method="post" action="/ui/providers/club/sign-in"><button class="button button-primary">Sign in</button></form>`,
-		`<form method="post" action="/ui/providers/club/settings"><input name="lounge" value="">`,
 		"Club has channels for an account.",
 	); r.status != http.StatusOK || missing != nil || strings.Contains(r.body, "Startup settings") {
 		t.Errorf("the club's tab = %d, lacks %q, or shows startup settings it has none of:\n%s", r.status, missing, r.body)
@@ -271,14 +249,14 @@ func TestSignIn(t *testing.T) {
 	tab := func() string { return get(t, server, "/ui/providers/club").body }
 
 	// A page of another site must not start it.
-	if r := post(t, server, "/ui/providers/club/sign-in", nil, "Sec-Fetch-Site", "cross-site"); r.status != http.StatusForbidden || members.login.State != provider.SignedOut {
+	if r := post(t, server, "/ui/providers/club/sign-in", "Sec-Fetch-Site", "cross-site"); r.status != http.StatusForbidden || members.login.State != provider.SignedOut {
 		t.Errorf("sign-in from another site = %d, sign-in %+v: want it refused", r.status, members.login)
 	}
-	if r := post(t, server, "/ui/providers/fake/sign-in", nil); r.status != http.StatusNotFound {
+	if r := post(t, server, "/ui/providers/fake/sign-in"); r.status != http.StatusNotFound {
 		t.Errorf("sign-in to a provider without accounts = %d, want 404", r.status)
 	}
 
-	if r := post(t, server, "/ui/providers/club/sign-in", nil, "Sec-Fetch-Site", "same-origin"); r.status != http.StatusSeeOther || r.header.Get("Location") != "/ui/providers/club" {
+	if r := post(t, server, "/ui/providers/club/sign-in", "Sec-Fetch-Site", "same-origin"); r.status != http.StatusSeeOther || r.header.Get("Location") != "/ui/providers/club" {
 		t.Fatalf("sign-in = %d to %q, want a redirect to the tab", r.status, r.header.Get("Location"))
 	}
 	if missing := lacks(tab(),
@@ -318,52 +296,11 @@ func TestSignIn(t *testing.T) {
 		t.Errorf("another tab, with the club's sign-in expired, lacks %q", missing)
 	}
 
-	if r := post(t, server, "/ui/providers/club/sign-out", nil); r.status != http.StatusSeeOther || r.header.Get("Location") != "/ui/providers/club" {
+	if r := post(t, server, "/ui/providers/club/sign-out"); r.status != http.StatusSeeOther || r.header.Get("Location") != "/ui/providers/club" {
 		t.Fatalf("sign-out = %d to %q, want a redirect to the tab", r.status, r.header.Get("Location"))
 	}
 	if missing := lacks(tab(), `<span class="badge">Signed out</span>`, `<span class="count">0</span>`, `>Club</a>`); missing != nil {
 		t.Errorf("tab after signing out lacks %q", missing)
-	}
-}
-
-// TestOwnSettings follows a setting the club brings itself, from the form on
-// its tab to the channel it adds.
-func TestOwnSettings(t *testing.T) {
-	server, members := newUI(t)
-	blue := url.Values{"lounge": {"Blue & <more>"}}
-
-	// A page of another site must not change it.
-	if r := post(t, server, "/ui/providers/club/settings", blue, "Sec-Fetch-Site", "cross-site"); r.status != http.StatusForbidden || members.lounge != "" {
-		t.Errorf("settings from another site = %d, lounge %q: want them refused", r.status, members.lounge)
-	}
-	for _, name := range []string{"fake", "nobody"} {
-		if r := post(t, server, "/ui/providers/"+name+"/settings", blue); r.status != http.StatusNotFound {
-			t.Errorf("settings for %s, which has none of its own = %d, want 404", name, r.status)
-		}
-	}
-
-	if r := post(t, server, "/ui/providers/club/settings", blue); r.status != http.StatusSeeOther || r.header.Get("Location") != "/ui/providers/club" {
-		t.Fatalf("settings = %d to %q, want a redirect to the tab", r.status, r.header.Get("Location"))
-	}
-	// The club is asked for its channels again.
-	if missing := lacks(get(t, server, "/ui/providers/club").body,
-		`<input name="lounge" value="Blue &amp; &lt;more&gt;">`,
-		`<span class="count">1</span>`,
-		`<span class="pos">1001</span>`,
-		`title="Blue &amp; &lt;more&gt; lounge"`,
-	); missing != nil || members.lounge != "Blue & <more>" {
-		t.Errorf("tab after choosing a lounge lacks %q, lounge %q", missing, members.lounge)
-	}
-
-	// The rest of the tab does without settings that can't be shown.
-	members.broken = errors.New("no template")
-	body := get(t, server, "/ui/providers/club").body
-	if missing := lacks(body,
-		`<p class="problem" role="status">Club’s own settings can’t be shown. telesfor’s log has the reason.</p>`,
-		`>Account</h2>`,
-		`<span class="pos">1001</span>`,
-	); missing != nil || strings.Contains(body, `name="lounge"`) {
-		t.Errorf("tab with settings that can't be shown lacks %q, or shows them:\n%s", missing, body)
 	}
 }
 

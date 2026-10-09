@@ -297,5 +297,6 @@ TELESFOR_SMOKE_DIST=$PWD/dist go test -count=1 -timeout 20m -run TestPackageServ
 
 Push a tag that starts with `v`, such as `v0.1.0`. Once the checks pass, CI
 builds the archives and packages with GoReleaser and publishes them as a
-GitHub release, to the AUR and to the Homebrew, Scoop and Nix repositories,
-then pushes the container image to `ghcr.io/combor/telesfor`.
+GitHub release, to the AUR and to the Homebrew, Scoop and Nix repositories.
+Beside the release, it pushes the container image to
+`ghcr.io/combor/telesfor`, which stays published if the release fails.

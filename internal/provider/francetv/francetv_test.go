@@ -71,17 +71,16 @@ type france struct {
 	reason string                      // and the reason that comes with it
 	delay  time.Duration               // how long the apps' API takes over an answer
 
-	video    string              // what the player's API says of France 2's stream
-	refused  int                 // if set, how the player's API answers instead
-	passes   int                 // how many passes have been handed out
-	revoked  map[string]bool     // the passes that are good no more
-	index    string              // the playlist a stream is handed out at: a master, mostly
-	media    string              // the playlist of a quality
-	blocked  map[string]int      // how the servers answer for a file, if not with it
-	ranged   map[string]bool     // the files asked for by range
-	fetched  map[string]int      // how often each file was asked for
-	directed int                 // how often the list of live channels was asked for
-	_        map[string]struct{} // keeps the struct from being compared
+	video    string          // what the player's API says of France 2's stream
+	refused  int             // if set, how the player's API answers instead
+	passes   int             // how many passes have been handed out
+	revoked  map[string]bool // the passes that are good no more
+	index    string          // the playlist a stream is handed out at: a master, mostly
+	media    string          // the playlist of a quality
+	blocked  map[string]int  // how the servers answer for a file, if not with it
+	ranged   map[string]bool // the files asked for by range
+	fetched  map[string]int  // how often each file was asked for
+	directed int             // how often the list of live channels was asked for
 }
 
 // serve starts a fake France Télévisions and returns it with a provider that
@@ -489,5 +488,3 @@ func TestStreamRefused(t *testing.T) {
 		t.Errorf("Stream() of a channel that is not offered = %+v, want an error", source)
 	}
 }
-
-var _ provider.Provider = (*Provider)(nil)

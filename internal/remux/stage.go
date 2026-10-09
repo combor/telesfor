@@ -33,8 +33,8 @@ type stage struct {
 	relay  *relay
 	ladder *ladder
 	ctl    *controller
-	gauge  *meter           // the stream on its way to the viewer
-	start  func(*leg) error // starts the ffmpeg that reads a leg
+	gauge  *meter                           // the stream on its way to the viewer
+	start  func(l *leg, input string) error // starts the ffmpeg that reads a leg from input
 	server *http.Server
 	flow   flow // how fast audio and video have been coming
 
@@ -48,8 +48,8 @@ type stage struct {
 	numbers map[string]int // those numbers, by address
 }
 
-// perform starts a stage for the stream that the relay is for.
-func (r *relay) perform(l *ladder, ctl *controller, gauge *meter, start func(*leg) error) (*stage, error) {
+// openStage starts a stage for the stream that a relay is for.
+func openStage(r *relay, l *ladder, ctl *controller, gauge *meter, start func(l *leg, input string) error) (*stage, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err

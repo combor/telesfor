@@ -51,7 +51,7 @@ func (s *stage) add(quality int, before *leg) *leg {
 		t.from, t.until, t.asked, t.started = -1, -1, -1, -1
 	}
 	s.legs = append(s.legs, l)
-	l.failed = s.start(l)
+	l.failed = s.start(l, s.input(l))
 	return l
 }
 

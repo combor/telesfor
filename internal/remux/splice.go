@@ -127,45 +127,45 @@ func (s *splicer) read(packet []byte) {
 // and returns it.
 func (s *splicer) join(packet []byte) []byte {
 	pid := pidOf(packet)
-	s.moveClock(packet)
+	if clock, ok := clockReference(packet); ok {
+		if s.shift != 0 || s.floor >= 0 {
+			clock = (clock + s.shift) & wrap
+			// A stream whose sound begins before its picture starts its clock
+			// that much earlier. The clock of the stream that goes out does
+			// not step back: it waits.
+			if back := (s.floor - clock) & wrap; s.floor >= 0 && back < longFrame {
+				clock = s.floor
+			} else {
+				s.floor = -1
+			}
+			setClockReference(packet, clock)
+		}
+		s.clock = clock
+	}
 	if pts, dts := stamps(packet); pts != nil && pid != 0 && pid != s.pmtPID { // tables have no frames in them
-		s.moveFrame(pts, dts)
+		if s.shift != 0 {
+			setTimestamp(pts, (timestamp(pts)+s.shift)&wrap)
+			if dts != nil {
+				setTimestamp(dts, (timestamp(dts)+s.shift)&wrap)
+			}
+		}
 		if pid == s.clockPID {
 			s.follow(pts, dts)
 		}
 	}
-	s.countOn(packet, pid)
-	return packet
-}
 
-func (s *splicer) moveClock(packet []byte) {
-	clock, ok := clockReference(packet)
-	if !ok {
-		return
-	}
-	if s.shift != 0 || s.floor >= 0 {
-		clock = (clock + s.shift) & wrap
-		// A stream whose sound begins before its picture starts its clock
-		// that much earlier. The clock of the stream that goes out does not
-		// step back: it waits.
-		if back := (s.floor - clock) & wrap; s.floor >= 0 && back < longFrame {
-			clock = s.floor
-		} else {
-			s.floor = -1
+	// A PID's counter counts the packets that carry something.
+	turn, turning := s.turned[pid]
+	if !turning {
+		if last, ok := s.counters[pid]; ok {
+			turn = (last + packet[3]>>4&1 - packet[3]) & 0x0f
 		}
-		setClockReference(packet, clock)
+		s.turned[pid] = turn
 	}
-	s.clock = clock
-}
-
-func (s *splicer) moveFrame(pts, dts []byte) {
-	if s.shift == 0 {
-		return
-	}
-	setTimestamp(pts, (timestamp(pts)+s.shift)&wrap)
-	if dts != nil {
-		setTimestamp(dts, (timestamp(dts)+s.shift)&wrap)
-	}
+	counter := (packet[3] + turn) & 0x0f
+	packet[3] = packet[3]&0xf0 | counter
+	s.counters[pid] = counter
+	return packet
 }
 
 // follow notes when a frame of the clock's stream is decoded and shown, and
@@ -195,19 +195,4 @@ func (s *splicer) follow(pts, dts []byte) {
 	if s.shown < 0 || (shown-s.shown)&wrap < 1<<(timestampBits-1) {
 		s.shown = shown
 	}
-}
-
-// countOn makes a packet's continuity counter count on. A PID's counter
-// counts the packets that carry something.
-func (s *splicer) countOn(packet []byte, pid int) {
-	turn, turning := s.turned[pid]
-	if !turning {
-		if last, ok := s.counters[pid]; ok {
-			turn = (last + packet[3]>>4&1 - packet[3]) & 0x0f
-		}
-		s.turned[pid] = turn
-	}
-	counter := (packet[3] + turn) & 0x0f
-	packet[3] = packet[3]&0xf0 | counter
-	s.counters[pid] = counter
 }

@@ -123,15 +123,9 @@ func TestAlignerOnFFmpegOutput(t *testing.T) {
 	// lag is how long after the video the audio of a stream starts, in seconds.
 	lag := func(stream []byte) float64 {
 		t.Helper()
-		probe := exec.Command(ffprobe, "-hide_banner", "-loglevel", "error", "-f", "mpegts", "-i", "pipe:0",
-			"-show_entries", "stream=codec_type,start_time", "-of", "csv=p=0")
-		probe.Stdin = bytes.NewReader(stream)
-		out, err := probe.Output()
-		if err != nil {
-			t.Fatal(err)
-		}
+		lines := inspect(t, ffprobe, stream, "-show_entries", "stream=codec_type,start_time")
 		start := map[string]float64{}
-		for _, line := range strings.Fields(string(out)) { // lines like "video,1.440000,"
+		for _, line := range lines { // lines like "video,1.440000,"
 			fields := strings.Split(line, ",")
 			at, err := strconv.ParseFloat(fields[1], 64)
 			if err != nil {
@@ -140,7 +134,7 @@ func TestAlignerOnFFmpegOutput(t *testing.T) {
 			start[fields[0]] = at
 		}
 		if len(start) != 2 {
-			t.Fatalf("ffprobe found %q, want a video and an audio stream", out)
+			t.Fatalf("ffprobe found %q, want a video and an audio stream", lines)
 		}
 		return start["audio"] - start["video"]
 	}

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,22 @@ func installed(t *testing.T, program string) string {
 		t.Skip(program + " is not installed")
 	}
 	return path
+}
+
+// inspect has ffprobe read an MPEG-TS stream and show what args ask for, and
+// returns what it printed, field by field. Anything ffprobe complains of
+// fails the test.
+func inspect(t *testing.T, ffprobe string, stream []byte, args ...string) []string {
+	t.Helper()
+	cmd := exec.Command(ffprobe, append([]string{"-hide_banner", "-loglevel", "error", "-f", "mpegts", "-i", "pipe:0", "-of", "csv=p=0"}, args...)...)
+	cmd.Stdin = bytes.NewReader(stream)
+	var complaints bytes.Buffer
+	cmd.Stderr = &complaints
+	out, err := cmd.Output()
+	if err != nil || complaints.Len() > 0 {
+		t.Errorf("ffprobe %s: %v\n%s", strings.Join(args, " "), err, complaints.Bytes())
+	}
+	return strings.Fields(string(out))
 }
 
 // TestCopy remuxes a short generated HLS stream end to end with ffmpeg, through

@@ -157,23 +157,10 @@ type watched struct {
 // wrote it, and returns what is in it.
 func watch(t *testing.T, ffprobe string, stream []byte) watched {
 	t.Helper()
-	probe := func(args ...string) []string {
-		t.Helper()
-		cmd := exec.Command(ffprobe, append([]string{"-hide_banner", "-loglevel", "error", "-f", "mpegts", "-i", "pipe:0", "-of", "csv=p=0"}, args...)...)
-		cmd.Stdin = bytes.NewReader(stream)
-		var complaints bytes.Buffer
-		cmd.Stderr = &complaints
-		out, err := cmd.Output()
-		if err != nil || complaints.Len() > 0 {
-			t.Errorf("ffprobe %s: %v\n%s", strings.Join(args, " "), err, complaints.Bytes())
-		}
-		return strings.Fields(string(out))
-	}
-
 	// Every frame is decoded a frame after the one before, and the sound goes
 	// on evenly: its frames are 1152 samples of 44100 a second.
 	decoded := map[string][]int{}
-	for _, line := range probe("-show_entries", "packet=codec_type,dts") { // lines like "video,126000"
+	for _, line := range inspect(t, ffprobe, stream, "-show_entries", "packet=codec_type,dts") { // lines like "video,126000"
 		kind, dts, _ := strings.Cut(strings.TrimSuffix(line, ","), ",")
 		at, err := strconv.Atoi(dts)
 		if err != nil {
@@ -199,7 +186,7 @@ func watch(t *testing.T, ffprobe string, stream []byte) watched {
 	}
 
 	var w watched
-	for _, line := range probe("-select_streams", "v", "-show_entries", "frame=width") {
+	for _, line := range inspect(t, ffprobe, stream, "-select_streams", "v", "-show_entries", "frame=width") {
 		width, err := strconv.Atoi(strings.TrimSuffix(line, ","))
 		if err != nil {
 			t.Fatalf("ffprobe said %q: %v", line, err)

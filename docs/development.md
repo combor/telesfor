@@ -242,18 +242,19 @@ go run ./internal/slowproxy -rate 20M
 curl 'http://127.0.0.1:8899/rate?to=3M'
 ```
 
-The tests use recorded responses. To check the providers against the real
-APIs of TVP and France Télévisions, the real sites and streams of EBC and
-TV Cultura, and TF1's guide and LCI, which CI does daily:
+The tests use recorded responses. To check the providers against their real
+APIs, sites and streams, which CI does daily:
 
 ```sh
-TELESFOR_LIVE=1 go test -count=1 -v -run TestLive \
-  ./internal/provider/tvp ./internal/provider/ebc ./internal/provider/cultura \
-  ./internal/provider/francetv ./internal/provider/tf1
+TELESFOR_LIVE=1 go test -count=1 -v -run TestLive ./internal/provider/...
 ```
 
+For TF1+, that checks only its guide and LCI, which are open to anyone.
+Globoplay's and WP Pilot's tests skip themselves without `TELESFOR_DATA`, as
+they do in CI.
+
 Globoplay's needs a telesfor that has signed in, stopped for the test, and a
-Brazilian connection, so CI does not run it:
+Brazilian connection:
 
 ```sh
 TELESFOR_LIVE=1 TELESFOR_DATA=<data directory> TELESFOR_GLOBO_PROXY='http://<proxy-host>:<port>' \
@@ -274,6 +275,8 @@ channels, which WP Pilot counts as changes of channel:
 TELESFOR_LIVE=1 TELESFOR_DATA=<data directory> TELESFOR_WPPILOT_PROXY='http://<proxy-host>:<port>' \
   go test -count=1 -v -run TestLive ./internal/provider/wppilot
 ```
+
+Each of these holds the data directory to itself, so run them one at a time.
 
 To test the container image, which CI also does on every push:
 

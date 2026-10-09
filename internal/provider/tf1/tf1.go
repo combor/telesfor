@@ -40,10 +40,6 @@ const (
 	// iPhone's is told where the HLS stream is, any other where the DASH one
 	// is.
 	phone = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1"
-
-	// rest is how long a stream's pass is left alone once it is handed out:
-	// see session.
-	rest = time.Minute
 )
 
 // channel is a channel as TF1+ streams it.
@@ -77,7 +73,7 @@ type Provider struct {
 	site, player, guide string
 
 	slower time.Duration // what TF1 asking for patience adds to the time between two looks at a code
-	rest   time.Duration // see the constant; tests are in more of a hurry
+	rest   time.Duration // see provider.Rest; tests are in more of a hurry
 
 	renewing sync.Mutex // held while the account's tokens are renewed: see token
 
@@ -108,7 +104,7 @@ func New(proxy string, db *bolt.DB) (*Provider, error) {
 		player: playerURL,
 		guide:  guideURL,
 		slower: 5 * time.Second, // as RFC 8628 has it
-		rest:   rest,
+		rest:   provider.Rest,
 	}
 	if p.account, err = load(db); err != nil {
 		return nil, err
@@ -147,23 +143,18 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 		return provider.Source{}, fmt.Errorf("tf1: %w", err)
 	}
 	pass, stream := passOf(master)
-	s := &session{
-		renewed: func(ctx context.Context) string {
-			again, err := p.feed(ctx, ch)
-			if err != nil {
-				return ""
-			}
-			// A pass to another stream is none to this one.
-			if pass, same := passOf(again); same == stream {
-				return pass
-			}
+	fresh := func(ctx context.Context) string {
+		again, err := p.feed(ctx, ch)
+		if err != nil {
 			return ""
-		},
-		rest:   p.rest,
-		first:  pass,
-		pass:   pass,
-		signed: time.Now(),
+		}
+		// A pass to another stream is none to this one.
+		if pass, same := passOf(again); same == stream {
+			return pass
+		}
+		return ""
 	}
+	s := session{provider.NewPass(pass, p.rest, fresh)}
 	client := *p.client
 	client.Transport = httpclient.Wrap(p.client.Transport, s.roundTrip)
 	return provider.Source{URL: master, Client: &client}, nil
@@ -264,40 +255,13 @@ func passOf(address string) (pass, stream string) {
 }
 
 // session sends the requests of a stream's HTTP client, which the stream is
-// read through, and keeps the stream's pass good.
-//
-// The pass is in the path of every address of the stream, and lasts four
-// hours. The stream goes on being asked for with the one it started with, so
-// a request that is refused is sent again with a new pass, which the requests
-// after it then go with.
-type session struct {
-	renewed func(context.Context) string // gets a new pass, or none
-	rest    time.Duration                // how long a pass is left alone: one this new is not refused for its age
+// read through, and keeps the stream's pass good: see provider.Pass. TF1's
+// lasts four hours.
+type session struct{ *provider.Pass }
 
-	mu     sync.Mutex
-	first  string    // the pass in the addresses ffmpeg asks for; empty if they carry none
-	pass   string    // the pass to ask with
-	signed time.Time // when it was handed out
-}
-
-func (s *session) roundTrip(req *http.Request, transport http.RoundTripper) (*http.Response, error) {
-	send := func(pass string) (*http.Response, error) {
-		out := req.Clone(req.Context())
-		if file, ok := strings.CutPrefix(out.URL.Path, s.first+"/"); ok && s.first != "" {
-			out.URL.Path, out.URL.RawPath = pass+"/"+file, ""
-		}
-		resp, err := transport.RoundTrip(out)
-		if resp != nil {
-			// The answer is to what was asked. What a playlist lists is
-			// then asked for the same way, with the pass that is renewed.
-			resp.Request = req
-		}
-		return resp, err
-	}
-	s.mu.Lock()
-	pass := s.pass
-	s.mu.Unlock()
-	resp, err := send(pass)
+func (s session) roundTrip(req *http.Request, next http.RoundTripper) (*http.Response, error) {
+	pass := s.Current()
+	resp, err := s.Send(next, req, pass)
 	if err != nil || resp.StatusCode != http.StatusForbidden {
 		return resp, err
 	}
@@ -308,33 +272,12 @@ func (s *session) roundTrip(req *http.Request, transport http.RoundTripper) (*ht
 	reason, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 	resp.Body.Close()
 	if !bytes.Contains(reason, []byte("geoip")) {
-		if pass = s.renew(req.Context(), pass); pass != "" {
-			return send(pass)
+		if pass = s.Renew(req.Context(), pass); pass != "" {
+			return s.Send(next, req, pass)
 		}
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(reason))
 	return resp, nil
-}
-
-// renew returns the pass to ask with after one was refused: a new one, or
-// none if a new one will not help.
-func (s *session) renew(ctx context.Context, refused string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	switch {
-	case s.first == "":
-		return ""
-	case s.pass != refused:
-		return s.pass // another request has renewed it since
-	case time.Since(s.signed) < s.rest:
-		return ""
-	}
-	pass := s.renewed(ctx)
-	if pass == "" {
-		return ""
-	}
-	s.pass, s.signed = pass, time.Now()
-	return pass
 }
 
 // find looks a channel up by its id.

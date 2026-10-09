@@ -47,10 +47,6 @@ const (
 	// lookups is how many programmes are looked up at once.
 	lookups = 6
 
-	// rest is how long a stream's pass is left alone once it is handed out:
-	// see session.
-	rest = time.Minute
-
 	// unlisted is what a placeholder says of itself.
 	unlisted = "France Télévisions has published no listings for this time."
 )
@@ -83,7 +79,7 @@ type Provider struct {
 	// The APIs. Tests point them at a fake.
 	guide, apps, player string
 
-	rest time.Duration // see the constant; tests are in more of a hurry
+	rest time.Duration // see provider.Rest; tests are in more of a hurry
 
 	learning sync.Mutex // held while programmes are looked up: see learn
 
@@ -109,7 +105,7 @@ func New(proxy string) (*Provider, error) {
 		guide:  guideURL,
 		apps:   appsURL,
 		player: playerURL,
-		rest:   rest,
+		rest:   provider.Rest,
 		live:   map[string]string{},
 		shows:  map[number]show{},
 		asked:  map[string]bool{},
@@ -493,21 +489,15 @@ func (p *Provider) stream(ctx context.Context, ch channel) (provider.Source, err
 		return provider.Source{}, refusal(ch.name, status, header)
 	}
 
-	pass := passOf(at, unsigned)
-	s := &session{
-		renewed: func(ctx context.Context) string {
-			if signed, err := p.sign(ctx, handed); err == nil {
-				if again, err := url.Parse(signed); err == nil {
-					return passOf(again, unsigned)
-				}
+	fresh := func(ctx context.Context) string {
+		if signed, err := p.sign(ctx, handed); err == nil {
+			if again, err := url.Parse(signed); err == nil {
+				return passOf(again, unsigned)
 			}
-			return ""
-		},
-		rest:   p.rest,
-		first:  pass,
-		pass:   pass,
-		signed: time.Now(),
+		}
+		return ""
 	}
+	s := session{provider.NewPass(passOf(at, unsigned), p.rest, fresh)}
 	client := *p.client
 	client.Transport = httpclient.Wrap(p.client.Transport, s.roundTrip)
 	return provider.Source{URL: signed, Client: &client}, nil
@@ -634,51 +624,26 @@ func (p *Provider) playlist(ctx context.Context, ch channel, address *url.URL) (
 }
 
 // session sends the requests of a stream's HTTP client, which the stream is
-// read through, and keeps the stream's pass good.
-//
-// The pass is in the path of every address of the stream, and lasts six
-// hours. The stream goes on being asked for with the one it started with, so
-// a request that is refused is sent again with a new pass, which the requests
-// after it then go with.
-type session struct {
-	renewed func(context.Context) string // gets a new pass, or none
-	rest    time.Duration                // how long a pass is left alone: one this new is not refused for its age
+// read through, and keeps the stream's pass good: see provider.Pass. France
+// Télévisions' lasts six hours.
+type session struct{ *provider.Pass }
 
-	mu     sync.Mutex
-	first  string    // the pass in the addresses ffmpeg asks for; empty if they carry none
-	pass   string    // the pass to ask with
-	signed time.Time // when it was handed out
-}
-
-func (s *session) roundTrip(req *http.Request, transport http.RoundTripper) (*http.Response, error) {
+func (s session) roundTrip(req *http.Request, next http.RoundTripper) (*http.Response, error) {
 	isPlaylist := strings.HasSuffix(req.URL.Path, ".m3u8")
-	send := func(pass string) (*http.Response, error) {
-		out := req.Clone(req.Context())
-		// A playlist holds the last four hours, and compressed it is a
-		// fortieth of the size. Go asks for that by itself, but not of a
-		// range, and ffmpeg asks for a range of everything.
-		if isPlaylist {
-			out.Header.Del("Range")
-		}
-		if file, ok := strings.CutPrefix(out.URL.Path, s.first+"/"); ok && s.first != "" {
-			out.URL.Path, out.URL.RawPath = pass+"/"+file, ""
-		}
-		resp, err := transport.RoundTrip(out)
-		if resp != nil {
-			// The answer is to what was asked. What a playlist lists is
-			// then asked for the same way, with the pass that is renewed.
-			resp.Request = req
-		}
-		return resp, err
+	out := req
+	// A playlist holds the last four hours, and compressed it is a
+	// fortieth of the size. Go asks for that by itself, but not of a
+	// range, and ffmpeg asks for a range of everything.
+	if isPlaylist {
+		out = req.Clone(req.Context())
+		out.Header.Del("Range")
 	}
-	s.mu.Lock()
-	pass := s.pass
-	s.mu.Unlock()
-	resp, err := send(pass)
+	pass := s.Current()
+	resp, err := s.Send(next, out, pass)
 	if err == nil && resp.StatusCode == http.StatusForbidden {
-		if pass = s.renew(req.Context(), pass); pass != "" {
+		if pass = s.Renew(req.Context(), pass); pass != "" {
 			resp.Body.Close()
-			resp, err = send(pass)
+			resp, err = s.Send(next, out, pass)
 		}
 	}
 	if err != nil || !isPlaylist || resp.StatusCode != http.StatusOK {
@@ -698,27 +663,6 @@ func (s *session) roundTrip(req *http.Request, transport http.RoundTripper) (*ht
 	resp.ContentLength = int64(len(playlist))
 	resp.Header.Set("Content-Length", strconv.Itoa(len(playlist)))
 	return resp, nil
-}
-
-// renew returns the pass to ask with after one was refused: a new one, or
-// none if a new one will not help.
-func (s *session) renew(ctx context.Context, refused string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	switch {
-	case s.first == "":
-		return ""
-	case s.pass != refused:
-		return s.pass // another request has renewed it since
-	case time.Since(s.signed) < s.rest:
-		return ""
-	}
-	pass := s.renewed(ctx)
-	if pass == "" {
-		return ""
-	}
-	s.pass, s.signed = pass, time.Now()
-	return pass
 }
 
 // find looks a channel up by its id.

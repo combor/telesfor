@@ -1,7 +1,6 @@
 package francetv
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/combor/telesfor/internal/httpclient"
 	"github.com/combor/telesfor/internal/provider"
 )
 
@@ -427,84 +425,6 @@ func TestStream(t *testing.T) {
 	}
 	if f.directed != 1 {
 		t.Errorf("asked for the list of live channels %d times, want once for both tunes", f.directed)
-	}
-}
-
-// Token renewal keeps the segment transport, while its API request and later
-// playlists use the ordinary transport with the same context.
-func TestCancellableSession(t *testing.T) {
-	var mu sync.Mutex
-	seen := map[string][]int{}
-	origin := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		mu.Lock()
-		seen[req.URL.Path] = append(seen[req.URL.Path], req.ProtoMajor)
-		mu.Unlock()
-		switch req.URL.Path {
-		case "/old/segment.ts":
-			w.WriteHeader(http.StatusForbidden)
-		case "/new/segment.ts":
-			if req.Header.Get("Range") != "bytes=2-5" {
-				t.Error("the renewed segment lost its byte range")
-			}
-			io.WriteString(w, "part")
-		case "/new/media.m3u8":
-			io.WriteString(w, "#EXTM3U\nsegment.ts\n")
-		case "/sign":
-			io.WriteString(w, "/new")
-		default:
-			http.NotFound(w, req)
-		}
-	}))
-	origin.EnableHTTP2 = true
-	origin.StartTLS()
-	defer origin.Close()
-	base := &http.Client{Transport: httpclient.NewTransport(origin.Client().Transport.(*http.Transport))}
-	defer base.CloseIdleConnections()
-	s := &session{first: "/old", pass: "/old"}
-	s.renewed = func(ctx context.Context) string {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, origin.URL+"/sign", nil)
-		resp, err := base.Do(req)
-		if err != nil {
-			t.Error(err)
-			return ""
-		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Error(err)
-			return ""
-		}
-		return string(body)
-	}
-	client := &http.Client{Transport: httpclient.Wrap(base.Transport, s.roundTrip)}
-	segments, release := httpclient.SegmentClient(client)
-	defer release()
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, origin.URL+"/old/segment.ts", nil)
-	req.Header.Set("Range", "bytes=2-5")
-	resp, err := segments.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil || string(body) != "part" {
-		t.Fatalf("renewed segment: %q, %v", body, err)
-	}
-	resp, err = client.Get(origin.URL + "/old/media.m3u8")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	for path, want := range map[string]int{"/old/segment.ts": 1, "/new/segment.ts": 1, "/sign": 2, "/new/media.m3u8": 2} {
-		if !slices.Equal(seen[path], []int{want}) {
-			t.Errorf("%s used %v, want HTTP/%d once", path, seen[path], want)
-		}
 	}
 }
 

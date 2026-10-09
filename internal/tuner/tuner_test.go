@@ -58,24 +58,42 @@ func (f fake) Stream(context.Context, string) (provider.Source, error) {
 // device is the tuner's in most tests: at the root, numbered from 1.
 var device = Device{ID: "0BADCAFE", Name: "Fake", First: 1}
 
-// request sends a request to a tuner offering the channels of p. The tuner has
-// no remuxer, so a request that gets as far as streaming panics.
-func request(t *testing.T, p provider.Provider, method, path string) *httptest.ResponseRecorder {
+// newTuner returns a tuner of device that offers the channels of p. It has no
+// remuxer, so a request that gets as far as streaming panics.
+func newTuner(t *testing.T, p provider.Provider) *Tuner {
 	t.Helper()
 	tuner, err := New(t.Context(), p, nil, device)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return tuner
+}
+
+// ask sends h a request for a path, as Plex at plex.local:5004 does.
+func ask(h http.Handler, method, path string) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
-	tuner.ServeHTTP(recorder, httptest.NewRequest(method, "http://plex.local:5004"+path, nil))
+	h.ServeHTTP(recorder, httptest.NewRequest(method, "http://plex.local:5004"+path, nil))
 	return recorder
 }
 
 // get asks a tuner offering the fake provider's channels for a path.
 func get(t *testing.T, path string) *httptest.ResponseRecorder {
 	t.Helper()
-	return request(t, fake{}, http.MethodGet, path)
+	return ask(newTuner(t, fake{}), http.MethodGet, path)
 }
+
+// guideOf reads the XMLTV guide a tuner answered with.
+func guideOf(t *testing.T, response *httptest.ResponseRecorder) xmlTV {
+	t.Helper()
+	var guide xmlTV
+	if err := xml.Unmarshal(response.Body.Bytes(), &guide); err != nil {
+		t.Fatalf("xmltv.xml = %d %s: %v", response.Code, response.Body, err)
+	}
+	return guide
+}
+
+// entry is a channel of lineup.json.
+type entry struct{ GuideNumber, GuideName, URL string }
 
 func TestDiscover(t *testing.T) {
 	var got struct {
@@ -110,8 +128,7 @@ func TestTunerAtAPath(t *testing.T) {
 	tuner.Register(mux)
 	get := func(path string, v any) {
 		t.Helper()
-		recorder := httptest.NewRecorder()
-		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://plex.local:5004"+path, nil))
+		recorder := ask(mux, http.MethodGet, path)
 		if err := json.Unmarshal(recorder.Body.Bytes(), v); err != nil {
 			t.Fatalf("%s = %d %s: %v", path, recorder.Code, recorder.Body, err)
 		}
@@ -128,7 +145,6 @@ func TestTunerAtAPath(t *testing.T) {
 	if got.TunerCount != 3 {
 		t.Errorf("discover.json has %d tuners, want the device's 3", got.TunerCount)
 	}
-	type entry struct{ GuideNumber, GuideName, URL string }
 	var lineup []entry
 	get("/fake/lineup.json", &lineup)
 	want := []entry{
@@ -147,11 +163,8 @@ func TestTunerAtAPath(t *testing.T) {
 	if get("/fake/lineup.json", &lineup); len(lineup) != 0 {
 		t.Errorf("lineup.json after the provider lost its channels = %v", lineup)
 	}
-	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://plex.local:5004/fake/xmltv.xml", nil))
-	var guide xmlTV
-	if err := xml.Unmarshal(recorder.Body.Bytes(), &guide); err != nil || len(guide.Channels)+len(guide.Programmes) != 0 {
-		t.Errorf("guide of an empty lineup = %d %s, %v: want an empty guide", recorder.Code, recorder.Body, err)
+	if guide := guideOf(t, ask(mux, http.MethodGet, "/fake/xmltv.xml")); len(guide.Channels)+len(guide.Programmes) != 0 {
+		t.Errorf("guide of an empty lineup has %d channels and %d programmes, want none", len(guide.Channels), len(guide.Programmes))
 	}
 }
 
@@ -217,7 +230,6 @@ func TestScansDoNotOvertake(t *testing.T) {
 }
 
 func TestLineup(t *testing.T) {
-	type entry struct{ GuideNumber, GuideName, URL string }
 	var got []entry
 	if err := json.Unmarshal(get(t, "/lineup.json").Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -227,17 +239,14 @@ func TestLineup(t *testing.T) {
 		{"1", "One", "http://plex.local:5004/stream/fake/one"},
 		{"2", "Two", "http://plex.local:5004/stream/fake/two"},
 	}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	if !slices.Equal(got, want) {
 		t.Errorf("lineup.json = %v, want %v", got, want)
 	}
 }
 
 func TestGuide(t *testing.T) {
 	response := get(t, "/xmltv.xml")
-	var guide xmlTV
-	if err := xml.Unmarshal(response.Body.Bytes(), &guide); err != nil {
-		t.Fatalf("xmltv.xml is not valid XML: %v\n%s", err, response.Body)
-	}
+	guide := guideOf(t, response)
 
 	if len(guide.Channels) != 2 || guide.Channels[0].ID != "1" || guide.Channels[1].Name != "Two" {
 		t.Errorf("guide channels = %+v, want the lineup with its numbers as ids", guide.Channels)
@@ -294,27 +303,22 @@ func (c *counting) Programmes(ctx context.Context, channels []provider.Channel, 
 	return c.fake.Programmes(ctx, channels, from, to)
 }
 
+// newCounting returns a counting provider with room for every fetch a test makes.
+func newCounting() *counting { return &counting{fetched: make(chan struct{}, 8)} }
+
 // askGuide asks a tuner for its guide.
-func askGuide(t *testing.T, tuner *Tuner) *httptest.ResponseRecorder {
-	t.Helper()
-	recorder := httptest.NewRecorder()
-	tuner.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://plex.local:5004/xmltv.xml", nil))
-	return recorder
+func askGuide(tuner *Tuner) *httptest.ResponseRecorder {
+	return ask(tuner, http.MethodGet, "/xmltv.xml")
 }
 
 // TestGuideIsFetchedOnce checks that the guide is fetched upstream once, not
 // once per request: Plex is served from the cache.
 func TestGuideIsFetchedOnce(t *testing.T) {
-	p := &counting{fetched: make(chan struct{}, 8)}
-	tuner, err := New(t.Context(), p, nil, device)
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := newCounting()
+	tuner := newTuner(t, p)
 	for range 3 {
-		response := askGuide(t, tuner)
-		var guide xmlTV
-		if err := xml.Unmarshal(response.Body.Bytes(), &guide); err != nil || len(guide.Programmes) != 2 {
-			t.Fatalf("xmltv.xml = %d %s, %v: want a guide of two programmes", response.Code, response.Body, err)
+		if guide := guideOf(t, askGuide(tuner)); len(guide.Programmes) != 2 {
+			t.Fatalf("xmltv.xml has %d programmes, want two", len(guide.Programmes))
 		}
 	}
 	if n := p.fetches.Load(); n != 1 {
@@ -325,12 +329,9 @@ func TestGuideIsFetchedOnce(t *testing.T) {
 // TestGuideOutlivesItsSource checks that a guide that cannot be fetched anew
 // is not thrown away: Plex is served the one there is.
 func TestGuideOutlivesItsSource(t *testing.T) {
-	p := &counting{fetched: make(chan struct{}, 8)}
-	tuner, err := New(t.Context(), p, nil, device)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code := askGuide(t, tuner).Code; code != http.StatusOK {
+	p := newCounting()
+	tuner := newTuner(t, p)
+	if code := askGuide(tuner).Code; code != http.StatusOK {
 		t.Fatalf("xmltv.xml = %d, want 200", code)
 	}
 	<-p.fetched // the fetch that filled the cache
@@ -348,10 +349,8 @@ func TestGuideOutlivesItsSource(t *testing.T) {
 	tuner.fetching <- struct{}{}
 	<-tuner.fetching
 
-	response := askGuide(t, tuner)
-	var guide xmlTV
-	if err := xml.Unmarshal(response.Body.Bytes(), &guide); err != nil || len(guide.Programmes) != 2 {
-		t.Errorf("xmltv.xml while the source is down = %d %s, %v: want the guide fetched before", response.Code, response.Body, err)
+	if guide := guideOf(t, askGuide(tuner)); len(guide.Programmes) != 2 {
+		t.Errorf("xmltv.xml while the source is down has %d programmes, want the two fetched before", len(guide.Programmes))
 	}
 }
 
@@ -379,10 +378,7 @@ func (s *stuck) Programmes(ctx context.Context, _ []provider.Channel, _, _ time.
 func TestCancelledGuideRequestIsNotKeptWaiting(t *testing.T) {
 	p := &stuck{entered: make(chan struct{}, 8), release: make(chan struct{})}
 	defer close(p.release)
-	tuner, err := New(t.Context(), p, nil, device)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tuner := newTuner(t, p)
 	<-p.entered // the first fetch is in flight
 
 	cancelled, cancel := context.WithCancel(t.Context())
@@ -403,11 +399,8 @@ func TestCancelledGuideRequestIsNotKeptWaiting(t *testing.T) {
 // the guide fetched anew, before any request: Plex is not kept waiting after
 // an account change.
 func TestScanRefreshesTheGuide(t *testing.T) {
-	p := &counting{fetched: make(chan struct{}, 8)}
-	tuner, err := New(t.Context(), p, nil, device)
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := newCounting()
+	tuner := newTuner(t, p)
 	<-p.fetched // the fetch that filled the cache
 	p.third.Store(true)
 	if err := tuner.Scan(t.Context()); err != nil {
@@ -427,12 +420,9 @@ func TestScanRefreshesTheGuide(t *testing.T) {
 // keeps the cached guide: what there is goes on being served, even while the
 // source is down.
 func TestUnchangedScanKeepsTheGuide(t *testing.T) {
-	p := &counting{fetched: make(chan struct{}, 8)}
-	tuner, err := New(t.Context(), p, nil, device)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code := askGuide(t, tuner).Code; code != http.StatusOK {
+	p := newCounting()
+	tuner := newTuner(t, p)
+	if code := askGuide(tuner).Code; code != http.StatusOK {
 		t.Fatalf("xmltv.xml = %d, want 200", code)
 	}
 	<-p.fetched // the fetch that filled the cache
@@ -441,10 +431,8 @@ func TestUnchangedScanKeepsTheGuide(t *testing.T) {
 	if err := tuner.Scan(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	response := askGuide(t, tuner)
-	var guide xmlTV
-	if err := xml.Unmarshal(response.Body.Bytes(), &guide); err != nil || len(guide.Programmes) != 2 {
-		t.Errorf("xmltv.xml after an unchanged scan = %d %s, %v: want the guide fetched before", response.Code, response.Body, err)
+	if guide := guideOf(t, askGuide(tuner)); len(guide.Programmes) != 2 {
+		t.Errorf("xmltv.xml after an unchanged scan has %d programmes, want the two fetched before", len(guide.Programmes))
 	}
 	if n := p.fetches.Load(); n != 1 {
 		t.Errorf("the guide was fetched %d times though nothing changed, want once", n)
@@ -461,11 +449,11 @@ func TestStream(t *testing.T) {
 
 	// A HEAD request asks whether a channel can be tuned. It gets the answer a
 	// GET would, but the channel is not tuned: nobody is there to watch.
-	head := request(t, fake{signal: true}, http.MethodHead, "/stream/fake/one")
+	head := ask(newTuner(t, fake{signal: true}), http.MethodHead, "/stream/fake/one")
 	if head.Code != http.StatusOK || head.Header().Get("Content-Type") != "video/mp2t" {
 		t.Errorf("HEAD of a channel: got %d %q, want 200 video/mp2t", head.Code, head.Header().Get("Content-Type"))
 	}
-	if status := request(t, fake{}, http.MethodHead, "/stream/fake/one").Code; status != http.StatusServiceUnavailable {
+	if status := ask(newTuner(t, fake{}), http.MethodHead, "/stream/fake/one").Code; status != http.StatusServiceUnavailable {
 		t.Errorf("HEAD of a channel that cannot be tuned: got %d, want 503", status)
 	}
 }

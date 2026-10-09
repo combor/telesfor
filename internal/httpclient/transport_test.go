@@ -180,7 +180,7 @@ func TestSegmentPoolReuse(t *testing.T) {
 func TestWrap(t *testing.T) {
 	origin := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Header.Get("X-Test-Auth") != "present" {
-			t.Errorf("%s over %s did not go through the wrapper", req.URL.Path, req.Proto)
+			t.Errorf("a request over %s did not go through the wrapper", req.Proto)
 		}
 		io.WriteString(w, "ok")
 	}))
@@ -194,19 +194,16 @@ func TestWrap(t *testing.T) {
 	})}
 	segments, release := SegmentClient(client)
 	defer release()
-	get := func(client *http.Client, path string, want int) {
-		t.Helper()
-		resp, err := client.Get(origin.URL + path)
+	for client, want := range map[*http.Client]int{client: 2, segments: 1} {
+		resp, err := client.Get(origin.URL)
 		if err != nil {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
 		if resp.ProtoMajor != want {
-			t.Errorf("%s used %s, want HTTP/%d", path, resp.Proto, want)
+			t.Errorf("used %s, want HTTP/%d", resp.Proto, want)
 		}
 	}
-	get(client, "/playlist", 2)
-	get(segments, "/segment", 1)
 }
 
 type authenticatedTransport struct{ base http.RoundTripper }

@@ -207,7 +207,7 @@ jobs:
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
           # The repository supplies the other labels, but no description.
           labels: &description |
-            org.opencontainers.image.description=Live TV from streaming services in Plex, as a virtual HDHomeRun tuner.
+            org.opencontainers.image.description=A virtual TV tuner for Plex: live TV from streaming providers as an HDHomeRun network tuner.
           annotations: *description
         env:
           # GHCR reads a multi-platform image's description from its index.

@@ -18,6 +18,11 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 
 FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
+LABEL org.opencontainers.image.title="telesfor" \
+      org.opencontainers.image.description="A virtual TV tuner for Plex: live TV from streaming providers as an HDHomeRun network tuner." \
+      org.opencontainers.image.source="https://github.com/combor/telesfor" \
+      org.opencontainers.image.licenses="BSD-3-Clause"
+
 # /data keeps the sign-ins to providers. Mount a volume there to keep them
 # when the container is replaced.
 RUN apk add --no-cache ffmpeg && install -d -o 65532 -g 65532 -m 700 /data

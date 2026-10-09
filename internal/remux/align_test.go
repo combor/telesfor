@@ -11,21 +11,17 @@ import (
 // names renders a stream packet by packet, to make a failed test readable.
 func names(stream []byte) string {
 	var names []string
-	for ; len(stream) >= packetSize; stream = stream[packetSize:] {
-		p := stream[:packetSize]
-		switch int(p[1]&0x1f)<<8 | int(p[2]) {
+	for p := range packetsIn(stream) {
+		switch pidOf(p) {
 		case 0:
 			names = append(names, "pat")
 		case tablePID:
 			names = append(names, "pmt")
 		default:
-			payload := p[4:]
-			if p[3]&0x20 != 0 {
-				payload = p[6:]
-			}
-			name := string(payload[0])
-			if payload[1] != 0xff {
-				name += strconv.Itoa(int(payload[1]))
+			body := payload(p)
+			name := string(body[0])
+			if body[1] != 0xff {
+				name += strconv.Itoa(int(body[1]))
 			}
 			names = append(names, name)
 		}

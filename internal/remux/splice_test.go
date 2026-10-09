@@ -11,7 +11,6 @@ import (
 // it, shown so much later than it is decoded, and with the sound that plays
 // as it is shown. The continuity counters count from zero.
 func written(start int64, frames int, length, ahead int64) []byte {
-	const wrap = 1<<timestampBits - 1
 	packets := [][]byte{pat, pmt}
 	for i := range int64(frames) {
 		decoded := (start + i*length) & wrap
@@ -24,7 +23,7 @@ func written(start int64, frames int, length, ahead int64) []byte {
 	counters := map[int]byte{}
 	var stream []byte
 	for _, packet := range packets {
-		pid := int(packet[1]&0x1f)<<8 | int(packet[2])
+		pid := pidOf(packet)
 		stream = append(stream, packet...)
 		stream[len(stream)-packetSize+3] |= counters[pid]
 		counters[pid] = (counters[pid] + 1) & 0x0f
@@ -41,9 +40,8 @@ func timingOf(t *testing.T, stream []byte) timing {
 	t.Helper()
 	checkContinuity(t, stream)
 	var all timing
-	for ; len(stream) >= packetSize; stream = stream[packetSize:] {
-		packet := stream[:packetSize]
-		pid := int(packet[1]&0x1f)<<8 | int(packet[2])
+	for packet := range packetsIn(stream) {
+		pid := pidOf(packet)
 		if clock, ok := clockReference(packet); ok {
 			all.clock = append(all.clock, clock)
 		}
@@ -165,9 +163,9 @@ func TestSplicer(t *testing.T) {
 	// with it: before where the clock of the stream before stopped.
 	t.Run("a clock that begins earlier", func(t *testing.T) {
 		early := written(126000, 3, frameLength, frameLength)
-		for packets := early; len(packets) >= packetSize; packets = packets[packetSize:] {
-			if clock, ok := clockReference(packets[:packetSize]); ok {
-				setClockReference(packets[:packetSize], clock-2*frameLength)
+		for packet := range packetsIn(early) {
+			if clock, ok := clockReference(packet); ok {
+				setClockReference(packet, clock-2*frameLength)
 			}
 		}
 		var out bytes.Buffer

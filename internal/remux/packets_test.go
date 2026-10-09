@@ -115,9 +115,9 @@ func tvpSegment(start, late int64) []byte {
 func checkContinuity(t *testing.T, stream []byte) {
 	t.Helper()
 	counters := map[int]byte{}
-	for packets := stream; len(packets) >= packetSize; packets = packets[packetSize:] {
-		pid, counter := int(packets[1]&0x1f)<<8|int(packets[2]), packets[3]&0x0f
-		if last, ok := counters[pid]; ok && packets[3]&0x10 != 0 && counter != (last+1)&0x0f {
+	for packet := range packetsIn(stream) {
+		pid, counter := pidOf(packet), packet[3]&0x0f
+		if last, ok := counters[pid]; ok && packet[3]&0x10 != 0 && counter != (last+1)&0x0f {
 			t.Errorf("PID %#x: a packet is counted %d after one counted %d", pid, counter, last)
 			return
 		}

@@ -9,10 +9,10 @@ const (
 
 	// anyFrame is how long a frame is taken to last when the stream before had
 	// no two frames to tell by: a twenty-fifth of a second.
-	anyFrame = 3600
+	anyFrame = clockRate / 25
 
 	// longFrame is longer than any frame lasts: a second.
-	longFrame = 90000
+	longFrame = clockRate
 )
 
 // splicer makes one MPEG-TS stream of what one ffmpeg after another writes.
@@ -84,8 +84,8 @@ func (s *splicer) read(packet []byte) {
 		s.out = append(s.out, packet...)
 		return
 	}
-	pid := int(packet[1]&0x1f)<<8 | int(packet[2])
-	if begins := packet[1]&0x40 != 0; begins && pid == 0 {
+	pid := pidOf(packet)
+	if begins := unitStart(packet); begins && pid == 0 {
 		s.pmtPID = programMapPID(section(packet))
 	} else if begins && pid == s.pmtPID {
 		s.clockPID, _ = programMap(section(packet))
@@ -110,16 +110,16 @@ func (s *splicer) read(packet []byte) {
 	} else if s.clock >= 0 {
 		// A stream without frames where they should be: its clock goes on
 		// from where the other stopped.
-		for held := s.held; len(held) >= packetSize; held = held[packetSize:] {
-			if first, ok := clockReference(held[:packetSize]); ok {
+		for held := range packetsIn(s.held) {
+			if first, ok := clockReference(held); ok {
 				s.shift = s.clock - first
 				break
 			}
 		}
 	}
 	s.joining = false
-	for held := s.held; len(held) >= packetSize; held = held[packetSize:] {
-		s.out = append(s.out, s.join(held[:packetSize])...)
+	for held := range packetsIn(s.held) {
+		s.out = append(s.out, s.join(held)...)
 	}
 	s.held = nil
 }
@@ -127,8 +127,7 @@ func (s *splicer) read(packet []byte) {
 // join makes a packet of the stream at hand one of the stream that goes out,
 // and returns it.
 func (s *splicer) join(packet []byte) []byte {
-	const wrap = 1<<timestampBits - 1
-	pid := int(packet[1]&0x1f)<<8 | int(packet[2])
+	pid := pidOf(packet)
 
 	clock, ticks := clockReference(packet)
 	pts, dts := stamps(packet)

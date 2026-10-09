@@ -251,7 +251,7 @@ func (r *relay) pass(w io.Writer, resp *http.Response) (size int64, err error) {
 		held = copy(buf, buf[whole:held+n])
 	}
 	if late := r.late.Load(); late != was {
-		slog.Debug("relay: decoding times run late, moving them back", "by", time.Duration(late)*time.Second/90000)
+		slog.Debug("relay: decoding times run late, moving them back", "by", time.Duration(late)*time.Second/clockRate)
 	}
 	if err == io.EOF {
 		err = nil

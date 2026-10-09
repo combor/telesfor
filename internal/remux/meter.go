@@ -29,24 +29,24 @@ func (m *meter) Write(p []byte) (int, error) {
 	if m.began.IsZero() {
 		m.began = time.Now()
 	}
-	// What the splicer writes is whole packets.
-	for packets := p; len(p)%packetSize == 0 && len(packets) > 0; packets = packets[packetSize:] {
-		clock, ok := clockReference(packets[:packetSize])
-		if !ok || packets[0] != 0x47 {
-			continue
+	if len(p)%packetSize == 0 { // what the splicer writes is whole packets
+		for packet := range packetsIn(p) {
+			clock, ok := clockReference(packet)
+			if !ok || packet[0] != 0x47 {
+				continue
+			}
+			// A clock that steps back a little has to pass where it was
+			// before more of the stream has gone. One that jumps has started
+			// anew, and tells nothing of how long that took.
+			switch step := (clock - m.clock) & wrap; {
+			case m.clock < 0:
+			case step < 10*clockRate:
+				m.span += step
+			case (m.clock-clock)&wrap < 10*clockRate:
+				continue
+			}
+			m.clock = clock
 		}
-		// A clock that steps back a little has to pass where it was before
-		// more of the stream has gone. One that jumps has started anew, and
-		// tells nothing of how long that took.
-		const wrap = 1<<timestampBits - 1
-		switch step := (clock - m.clock) & wrap; {
-		case m.clock < 0:
-		case step < 10*longFrame:
-			m.span += step
-		case (m.clock-clock)&wrap < 10*longFrame:
-			continue
-		}
-		m.clock = clock
 	}
 	m.mu.Unlock()
 	return m.w.Write(p)
@@ -77,5 +77,5 @@ func (m *meter) sent() (media, since time.Duration, onAir bool) {
 	if m.began.IsZero() {
 		return 0, 0, false
 	}
-	return time.Duration(m.span) * time.Second / longFrame, time.Since(m.began), true
+	return time.Duration(m.span) * time.Second / clockRate, time.Since(m.began), true
 }

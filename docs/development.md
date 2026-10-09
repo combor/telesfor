@@ -200,6 +200,19 @@ code the user enters on the provider's own site. It keeps the account across
 restarts with `store.Get`, `store.Put` and `store.Delete`, in a bucket named
 for it.
 
+Beyond its package and `main.go`, a provider is written up by hand in:
+
+- `README.md`: a line of *What you get*, the region note if it needs a
+  connection in its own country, and a row of the *Connect Plex* table.
+- `docs/usage.md`: a *Configuration* row for its proxy, and a section of its
+  own. With a sign-in, also the *Web interface* sentence on signing in and a
+  *Troubleshooting* row.
+- This page: a row of the package table, and with a sign-in, how to run its
+  live test.
+- `packaging/linux/telesfor.env`: its proxy, commented out, with the others
+  of its country.
+- Its package: a `TestLive`, which CI runs daily with the others.
+
 ## Tests
 
 With ffmpeg installed, run:

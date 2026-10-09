@@ -26,7 +26,7 @@ func TestProbeBeforeFiveCompleteBuckets(t *testing.T) {
 		if speed < 3e6 {
 			t.Errorf("at %v measured %.2f Mbps, losing the audio contribution", test.probe, speed/1e6)
 		}
-		r := &route{streams: map[*controller]float64{}}
+		r := &route{}
 		c := newController("probe", franceLadder, r, func() (time.Duration, time.Duration, bool) { return 0, 0, false })
 		to, _, _, change := c.progress(c.start(), coming{got: got - first, of: 5 << 20, flow: elapsed, took: elapsed, speed: speed, rate: rate, length: 7680 * time.Millisecond})
 		if !change || c.ladder[to].height < 540 {
@@ -52,7 +52,7 @@ func TestProbeCountsBothTracks(t *testing.T) {
 		if speed != 1.5e6 {
 			t.Fatalf("at %v measured %.0f bps, want audio and video together at 1.5 Mbps", elapsed, speed)
 		}
-		r := &route{streams: map[*controller]float64{}}
+		r := &route{}
 		c := newController("probe", franceLadder, r, func() (time.Duration, time.Duration, bool) { return 0, 0, false })
 		quality := c.start()
 		to, _, _, change := c.progress(quality, coming{got: got - first, of: 5 << 20, flow: flowing, took: elapsed, speed: speed, rate: rate, length: 7680 * time.Millisecond})

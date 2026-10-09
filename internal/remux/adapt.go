@@ -58,6 +58,7 @@ const (
 
 // route is what is known of the connection that a provider's streams come
 // over: how fast it was when last measured, and what streams it carries now.
+// Its zero value is a route of which nothing is known yet.
 type route struct {
 	mu      sync.Mutex
 	speed   float64                 // in bits a second
@@ -82,6 +83,9 @@ func (r *route) learn(speed float64, now time.Time) {
 // take notes what a stream takes of the connection, and leave that it is over.
 func (r *route) take(c *controller, rate float64) {
 	r.mu.Lock()
+	if r.streams == nil {
+		r.streams = map[*controller]float64{}
+	}
 	r.streams[c] = rate
 	r.mu.Unlock()
 }

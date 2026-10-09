@@ -78,7 +78,7 @@ func (r *Remuxer) route(name string) *route {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.routes[name] == nil {
-		r.routes[name] = &route{streams: map[*controller]float64{}}
+		r.routes[name] = &route{}
 	}
 	return r.routes[name]
 }

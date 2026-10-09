@@ -2,7 +2,6 @@ package remux
 
 import (
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"strings"
@@ -103,7 +102,7 @@ func (w *world) join(adapts bool, at time.Duration) *viewer {
 			return v.delivered, w.at - v.began, v.began >= 0
 		})
 		v.ctl.now = func() time.Time { return w.start.Add(w.at) }
-		v.ctl.log = slog.New(slog.NewTextHandler(io.Discard, nil))
+		v.ctl.log = slog.New(slog.DiscardHandler)
 	}
 	w.viewers = append(w.viewers, v)
 	return v
@@ -346,7 +345,7 @@ func TestAdaptation(t *testing.T) {
 			t.Run(test.name+"/"+provider.name, func(t *testing.T) {
 				play := func(adapts bool) (all outcome, each []string) {
 					w := &world{ladder: provider.ladder, segment: provider.segment, speed: test.speed, delay: test.delay,
-						start: time.Unix(0, 0), route: &route{streams: map[*controller]float64{}}}
+						start: time.Unix(0, 0), route: &route{}}
 					if w.delay == nil {
 						w.delay = func(int) time.Duration { return 0 }
 					}
@@ -380,7 +379,7 @@ func TestAdaptation(t *testing.T) {
 // clock to be set.
 func testController(r *route, now *time.Time) *controller {
 	c := newController("test", tvpLadder, r, func() (time.Duration, time.Duration, bool) { return 0, 0, false })
-	c.now, c.log = func() time.Time { return *now }, slog.New(slog.NewTextHandler(io.Discard, nil))
+	c.now, c.log = func() time.Time { return *now }, slog.New(slog.DiscardHandler)
 	return c
 }
 
@@ -388,7 +387,7 @@ func testController(r *route, now *time.Time) *controller {
 // measured of late, less what other streams on the connection take.
 func TestControllerStartsOnWhatIsKnown(t *testing.T) {
 	now := time.Unix(0, 0)
-	r := &route{streams: map[*controller]float64{}}
+	r := &route{}
 	unknown := testController(r, &now)
 	if got := unknown.start(); got != 2 {
 		t.Errorf("with nothing known, started on quality %d, want the best", got)
@@ -413,7 +412,7 @@ func TestControllerStartsOnWhatIsKnown(t *testing.T) {
 // for longer every time.
 func TestControllerLeavesAFailedStepUpAlone(t *testing.T) {
 	now := time.Unix(0, 0)
-	c := testController(&route{streams: map[*controller]float64{}}, &now)
+	c := testController(&route{}, &now)
 	c.start()
 	step := func(to int, after time.Duration) {
 		now = now.Add(after)
@@ -443,7 +442,7 @@ func TestControllerLeavesAFailedStepUpAlone(t *testing.T) {
 // may have failed for the moment only.
 func TestControllerTriesAQualityAgain(t *testing.T) {
 	now := time.Unix(0, 0)
-	c := testController(&route{streams: map[*controller]float64{}}, &now)
+	c := testController(&route{}, &now)
 	c.start()
 	for _, want := range []time.Duration{bar, 2 * bar} {
 		c.unfits(0)
@@ -460,7 +459,7 @@ func TestControllerTriesAQualityAgain(t *testing.T) {
 
 // Parallel audio must not make a video segment look closer to completion.
 func TestProgressUsesSegmentRate(t *testing.T) {
-	r := &route{streams: map[*controller]float64{}}
+	r := &route{}
 	c := newController("slow video", franceLadder, r, func() (time.Duration, time.Duration, bool) { return 0, 0, true })
 	quality := c.start()
 	c.given, c.full, c.delivered, c.hold = 1, 10*time.Second, 5*time.Second, 0

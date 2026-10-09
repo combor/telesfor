@@ -445,7 +445,7 @@ func TestAudioContributesToFlow(t *testing.T) {
 	defer relay.close()
 	defer relay.segments.CloseIdleConnections()
 	now := time.Now()
-	ctl := testController(&route{streams: map[*controller]float64{}}, &now)
+	ctl := testController(&route{}, &now)
 	st, err := relay.perform(tvpLadder, ctl, newMeter(io.Discard), func(*leg) error { return nil })
 	if err != nil {
 		t.Fatal(err)
@@ -527,7 +527,7 @@ func TestUnwatchedSegmentCancellation(t *testing.T) {
 			}
 			defer relay.close()
 			now := time.Now()
-			ctl := testController(&route{streams: map[*controller]float64{}}, &now)
+			ctl := testController(&route{}, &now)
 			st, err := relay.perform(tvpLadder, ctl, newMeter(io.Discard), func(*leg) error { return nil })
 			if err != nil {
 				t.Fatal(err)

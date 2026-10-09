@@ -205,7 +205,7 @@ func (h *Handler) signIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := account.SignIn(r.Context()); err != nil {
-		slog.Error("sign-in failed", "err", err)
+		slog.Error("sign-in failed", "provider", account.Name(), "err", err)
 	}
 	http.Redirect(w, r, tabPath(account), http.StatusSeeOther)
 }
@@ -217,7 +217,7 @@ func (h *Handler) signOut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := account.SignOut(); err != nil {
-		slog.Error("sign-out failed", "err", err)
+		slog.Error("sign-out failed", "provider", account.Name(), "err", err)
 	}
 	http.Redirect(w, r, tabPath(account), http.StatusSeeOther)
 }

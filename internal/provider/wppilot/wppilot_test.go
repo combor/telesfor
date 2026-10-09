@@ -408,14 +408,7 @@ func TestSignInFails(t *testing.T) {
 			t.Fatal(err)
 		}
 		// The account that was there stays.
-		login := providertest.Await(t, p, provider.SignedIn)
-		for range 2000 {
-			if login = p.Login(); login.Problem != "" {
-				break
-			}
-			time.Sleep(time.Millisecond)
-		}
-		if login.Problem != want {
+		if login := providertest.Await(t, p, provider.SignedIn); login.Problem != want {
 			t.Errorf("code answered with %s: %+v, want the problem %q", code, login, want)
 		}
 	}
@@ -426,13 +419,7 @@ func TestSignInFails(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	for range 2000 {
-		if p.Login().Problem != "" {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	if login := p.Login(); login != (provider.Login{Problem: codeExpired}) {
+	if login := providertest.Await(t, p, provider.SignedOut); login != (provider.Login{Problem: codeExpired}) {
 		t.Errorf("code that ran out: %+v", login)
 	}
 }

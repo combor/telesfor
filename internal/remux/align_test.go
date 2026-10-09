@@ -8,85 +8,20 @@ import (
 	"testing"
 )
 
-// The PIDs of the stream the tests build.
-const (
-	tablePID = 0x1000 // the program map table
-	videoPID = 0x100
-	audioPID = 0x101
-)
-
-// packet builds an MPEG-TS packet. A keyframe is marked the way ffmpeg marks
-// one, as a random access point. The payload tells packets apart.
-func packet(pid int, begins, keyframe bool, payload ...byte) []byte {
-	p := []byte{0x47, byte(pid >> 8), byte(pid), 0x10}
-	if begins {
-		p[1] |= 0x40
-	}
-	if keyframe {
-		p[3] |= 0x20
-		p = append(p, 1, 0x40) // an adaptation field of one byte: its flags
-	}
-	p = append(p, payload...)
-	for len(p) < packetSize {
-		p = append(p, 0xff)
-	}
-	return p
-}
-
-// programMapPacket builds the table that lists the streams, with the clock on
-// the video.
-func programMapPacket(streams ...int) []byte {
-	section := []byte{
-		0x02, 0, 0, // table id; the section's length, filled in below
-		0, 1, 0xc1, 0, 0, // program number, version, section numbers
-		0xe0 | videoPID>>8, videoPID & 0xff, // the stream that carries the clock
-		0xf0, 0, // no descriptors of the program
-	}
-	for _, pid := range streams {
-		section = append(section, 0x1b, 0xe0|byte(pid>>8), byte(pid), 0xf0, 0) // type, PID, no descriptors
-	}
-	section = append(section, 0, 0, 0, 0) // a checksum that nobody checks
-	section[1], section[2] = 0xb0|byte((len(section)-3)>>8), byte(len(section)-3)
-	return packet(tablePID, true, false, append([]byte{0}, section...)...)
-}
-
-// The packets the test streams are made of.
-var (
-	pat = packet(0, true, false,
-		0,                // the section begins right here
-		0x00, 0xb0, 0x0d, // table id; the section's length
-		0, 1, 0xc1, 0, 0, // transport stream id, version, section numbers
-		0, 1, 0xe0|tablePID>>8, tablePID&0xff, // program 1 is described at tablePID
-		0, 0, 0, 0, // a checksum that nobody checks
-	)
-	pmt   = programMapPacket(videoPID, audioPID)
-	key1  = packet(videoPID, true, true, 'k', 1) // a keyframe begins
-	key2  = packet(videoPID, true, true, 'k', 2)
-	frame = packet(videoPID, true, false, 'f')  // another frame begins
-	more  = packet(videoPID, false, false, 'm') // more of a frame
-	aud1  = packet(audioPID, true, false, 'a', 1)
-	aud2  = packet(audioPID, true, false, 'a', 2)
-	rest  = packet(audioPID, false, false, 'r') // more of an audio frame
-)
-
 // names renders a stream packet by packet, to make a failed test readable.
 func names(stream []byte) string {
 	var names []string
-	for ; len(stream) >= packetSize; stream = stream[packetSize:] {
-		p := stream[:packetSize]
-		switch int(p[1]&0x1f)<<8 | int(p[2]) {
+	for p := range packetsIn(stream) {
+		switch pidOf(p) {
 		case 0:
 			names = append(names, "pat")
 		case tablePID:
 			names = append(names, "pmt")
 		default:
-			payload := p[4:]
-			if p[3]&0x20 != 0 {
-				payload = p[6:]
-			}
-			name := string(payload[0])
-			if payload[1] != 0xff {
-				name += strconv.Itoa(int(payload[1]))
+			body := payload(p)
+			name := string(body[0])
+			if body[1] != 0xff {
+				name += strconv.Itoa(int(body[1]))
 			}
 			names = append(names, name)
 		}
@@ -175,14 +110,7 @@ func TestAlignerGivesUp(t *testing.T) {
 // TestAlignerOnFFmpegOutput checks the aligner against the real thing: a stream
 // from ffmpeg whose audio starts three seconds after its video.
 func TestAlignerOnFFmpegOutput(t *testing.T) {
-	ffmpeg, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		t.Skip("ffmpeg is not installed")
-	}
-	ffprobe, err := exec.LookPath("ffprobe")
-	if err != nil {
-		t.Skip("ffprobe is not installed")
-	}
+	ffmpeg, ffprobe := installed(t, "ffmpeg"), installed(t, "ffprobe")
 	stream, err := exec.Command(ffmpeg, "-hide_banner", "-loglevel", "error",
 		"-f", "lavfi", "-i", "testsrc=duration=6:size=160x120:rate=25",
 		"-itsoffset", "3", "-f", "lavfi", "-i", "sine=duration=3",
@@ -195,15 +123,9 @@ func TestAlignerOnFFmpegOutput(t *testing.T) {
 	// lag is how long after the video the audio of a stream starts, in seconds.
 	lag := func(stream []byte) float64 {
 		t.Helper()
-		probe := exec.Command(ffprobe, "-hide_banner", "-loglevel", "error", "-f", "mpegts", "-i", "pipe:0",
-			"-show_entries", "stream=codec_type,start_time", "-of", "csv=p=0")
-		probe.Stdin = bytes.NewReader(stream)
-		out, err := probe.Output()
-		if err != nil {
-			t.Fatal(err)
-		}
+		lines := inspect(t, ffprobe, stream, "-show_entries", "stream=codec_type,start_time")
 		start := map[string]float64{}
-		for _, line := range strings.Fields(string(out)) { // lines like "video,1.440000,"
+		for _, line := range lines { // lines like "video,1.440000,"
 			fields := strings.Split(line, ",")
 			at, err := strconv.ParseFloat(fields[1], 64)
 			if err != nil {
@@ -212,7 +134,7 @@ func TestAlignerOnFFmpegOutput(t *testing.T) {
 			start[fields[0]] = at
 		}
 		if len(start) != 2 {
-			t.Fatalf("ffprobe found %q, want a video and an audio stream", out)
+			t.Fatalf("ffprobe found %q, want a video and an audio stream", lines)
 		}
 		return start["audio"] - start["video"]
 	}

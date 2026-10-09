@@ -45,14 +45,6 @@
   </section>
   {{- end}}
 
-  {{- /* The settings the provider brings itself. */}}
-  {{- with .Own}}
-  {{.}}
-  {{- end}}
-  {{- with .Problem}}
-  <p class="problem" role="status">{{.}}</p>
-  {{- end}}
-
   {{- if .Settings}}
   <section aria-labelledby="startup-title">
     <div class="section-head">

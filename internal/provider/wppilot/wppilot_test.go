@@ -19,6 +19,7 @@ import (
 
 	"github.com/combor/telesfor/internal/httpclient"
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/providertest"
 	"github.com/combor/telesfor/internal/store"
 )
 
@@ -274,7 +275,7 @@ func serve(t *testing.T, db *bolt.DB) (*pilot, *Provider) {
 	f.url = server.URL
 
 	client := *server.Client()
-	client.Transport = agent{client.Transport}
+	client.Transport = httpclient.Wrap(client.Transport, agent)
 	p := &Provider{client: &client, db: db, site: server.URL, poll: time.Millisecond, codeLife: time.Minute}
 	var err error
 	if p.account, err = load(db); err != nil {
@@ -289,19 +290,6 @@ func signedIn(t *testing.T) (*pilot, *Provider) {
 	f, p := serve(t, nil)
 	p.account = &account{ID: "sid", Val: "val1", Channels: slices.Clone(lineup)}
 	return f, p
-}
-
-// await waits for the provider's sign-in to reach a state.
-func await(t *testing.T, p *Provider, want provider.LoginState) provider.Login {
-	t.Helper()
-	for range 2000 {
-		if login := p.Login(); login.State == want {
-			return login
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("sign-in stands at %+v, want state %d", p.Login(), want)
-	return provider.Login{}
 }
 
 // viewers counts those the provider takes to be watching.
@@ -420,14 +408,7 @@ func TestSignInFails(t *testing.T) {
 			t.Fatal(err)
 		}
 		// The account that was there stays.
-		login := await(t, p, provider.SignedIn)
-		for range 2000 {
-			if login = p.Login(); login.Problem != "" {
-				break
-			}
-			time.Sleep(time.Millisecond)
-		}
-		if login.Problem != want {
+		if login := providertest.Await(t, p, provider.SignedIn); login.Problem != want {
 			t.Errorf("code answered with %s: %+v, want the problem %q", code, login, want)
 		}
 	}
@@ -438,13 +419,7 @@ func TestSignInFails(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	for range 2000 {
-		if p.Login().Problem != "" {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	if login := p.Login(); login != (provider.Login{Problem: codeExpired}) {
+	if login := providertest.Await(t, p, provider.SignedOut); login != (provider.Login{Problem: codeExpired}) {
 		t.Errorf("code that ran out: %+v", login)
 	}
 }
@@ -454,7 +429,7 @@ func TestSignOutGivesUpTheCode(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	await(t, p, provider.Pending)
+	providertest.Await(t, p, provider.Pending)
 	if err := p.SignOut(); err != nil {
 		t.Fatal(err)
 	}
@@ -501,7 +476,7 @@ func TestConsents(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if login := await(t, p, provider.SignedIn); login.Problem != consents {
+	if login := providertest.Await(t, p, provider.SignedIn); login.Problem != consents {
 		t.Errorf("signed in without the consents: %+v, want to be told of them", login)
 	}
 	// The guide is when telesfor learns that they have been accepted.
@@ -557,20 +532,10 @@ func TestStream(t *testing.T) {
 	}
 
 	// The stream's servers answer to who opened the stream, and are none of
-	// the session's business. Segments go over a pool of their own.
-	segments := *source.Client
-	transport, release := httpclient.SegmentTransport(source.Client.Transport)
-	defer release()
-	segments.Transport = transport
-	for client, file := range map[*http.Client]string{source.Client: "playlist.m3u8", &segments: "media.ts"} {
-		resp, err := client.Get(f.url + "/cdn/9/" + file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if want := file + " by " + browser + " with "; resp.StatusCode != http.StatusOK || !slices.Contains(see(f, func() []string { return f.fetched }), want) {
-			t.Errorf("%s: %s, asked for as %q: want it asked for as %q", file, resp.Status, f.fetched, want)
-		}
+	// the session's business.
+	resp, _ := providertest.Get(t, source.Client, f.url+"/cdn/9/playlist.m3u8")
+	if want := "playlist.m3u8 by " + browser + " with "; resp.StatusCode != http.StatusOK || !slices.Contains(see(f, func() []string { return f.fetched }), want) {
+		t.Errorf("the playlist: %s, asked for as %q: want it asked for as %q", resp.Status, f.fetched, want)
 	}
 
 	// WP is told that the stream is watched for as long as it is, and that
@@ -670,34 +635,50 @@ func TestStream(t *testing.T) {
 	if opens := f.opened[len(f.opened)-3:]; !strings.HasPrefix(opens[0], "9 ") || !strings.HasPrefix(opens[1], "158 ") || !strings.HasPrefix(opens[2], "158 ") {
 		t.Errorf("a change of channel with the account full: opened %q, want the new channel asked for again once the old was closed", opens)
 	}
+}
 
-	for refusal, want := range map[string]string{
-		"user_outside_eu":               "-wppilot-proxy",
-		"user_not_verified_eu":          "-wppilot-proxy",
-		"user_channel_proxy_detected":   "refused at this address",
-		"multiroom_limit_exceeded":      "with Polsat HD, TVN playing",
-		"stream_consumption_over_limit": "WP Pilot answers 422 stream_consumption_over_limit",
-		"channel_switch_limit":          "WP Pilot answers 422 channel_switch_limit",
-	} {
-		f.set(func() { f.refusal = refusal })
-		if _, err := p.Stream(t.Context(), "9"); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("Stream() refused with %s = %v, want an error with %q", refusal, err, want)
-		}
+func TestStreamRefused(t *testing.T) {
+	tests := []struct {
+		refusal string
+		want    string
+	}{
+		{"user_outside_eu", "-wppilot-proxy"},
+		{"user_not_verified_eu", "-wppilot-proxy"},
+		{"user_channel_proxy_detected", "refused at this address"},
+		{"multiroom_limit_exceeded", "with Polsat HD, TVN playing"},
+		{"stream_consumption_over_limit", "WP Pilot answers 422 stream_consumption_over_limit"},
+		{"channel_switch_limit", "WP Pilot answers 422 channel_switch_limit"},
 	}
-	if got, _ := p.Channels(t.Context()); !slices.Equal(got, channels) || p.Login() != (provider.Login{State: provider.SignedIn}) {
-		t.Errorf("after the refusals: channels %v, sign-in %+v: want neither touched", got, p.Login())
+	for _, test := range tests {
+		t.Run(test.refusal, func(t *testing.T) {
+			f, p := signedIn(t)
+			f.set(func() { f.refusal = test.refusal })
+
+			_, err := p.Stream(t.Context(), "9")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Errorf("Stream() error = %v, want one mentioning %q", err, test.want)
+			}
+			if got, _ := p.Channels(t.Context()); !slices.Equal(got, channels) || p.Login() != (provider.Login{State: provider.SignedIn}) {
+				t.Errorf("after the refusal: channels %v, sign-in %+v: want neither touched", got, p.Login())
+			}
+		})
 	}
+
+	_, p := signedIn(t)
 	if _, err := p.Stream(t.Context(), "16"); err == nil || !strings.Contains(err.Error(), "no channel") {
 		t.Errorf("Stream() of a channel the account lacks = %v", err)
-	}
-
-	f.set(func() { f.refusal, f.revoked = "", true })
-	if _, err := p.Stream(t.Context(), "9"); err == nil || !strings.Contains(err.Error(), "sign in again") || p.Login().State != provider.Expired {
-		t.Errorf("Stream() with a session WP dropped = %v, sign-in %+v: want it expired", err, p.Login())
 	}
 	_, signedOut := serve(t, nil)
 	if _, err := signedOut.Stream(t.Context(), "9"); err == nil || !strings.Contains(err.Error(), "sign in") {
 		t.Errorf("Stream() without an account = %v, want a call to sign in", err)
+	}
+}
+
+func TestStreamExpiresTheSignIn(t *testing.T) {
+	f, p := signedIn(t)
+	f.set(func() { f.revoked = true })
+	if _, err := p.Stream(t.Context(), "9"); err == nil || !strings.Contains(err.Error(), "sign in again") || p.Login().State != provider.Expired {
+		t.Errorf("Stream() with a session WP dropped = %v, sign-in %+v: want it expired", err, p.Login())
 	}
 }
 

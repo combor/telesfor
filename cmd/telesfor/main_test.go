@@ -66,11 +66,12 @@ func TestSettings(t *testing.T) {
 	}
 
 	// Without the login: the settings page is open to the network.
+	s := source{key: "tvp"}
 	proxy := web.Setting{Name: "Proxy", Value: "http://proxy.example:8888", Flag: "-tvp-proxy", Env: "TELESFOR_TVP_PROXY"}
-	if got := proxySetting("http://user:secret@proxy.example:8888", "-tvp-proxy", "TELESFOR_TVP_PROXY"); got != proxy {
+	if got := s.proxySetting("http://user:secret@proxy.example:8888"); got != proxy {
 		t.Errorf("proxy setting = %+v, want %+v", got, proxy)
 	}
-	if got := proxySetting("", "-tvp-proxy", "TELESFOR_TVP_PROXY"); got.Value != "" || got.State != "Not set" {
+	if got := s.proxySetting(""); got.Value != "" || got.State != "Not set" {
 		t.Errorf("setting without a proxy = %+v", got)
 	}
 }

@@ -162,11 +162,8 @@ func (t *Tuner) Name() string { return t.device.Name }
 // Provider is where the tuner's channels come from.
 func (t *Tuner) Provider() provider.Provider { return t.provider }
 
-// URL is the address the client reached the tuner at, so that the URLs it is
-// handed work from wherever it is.
-func (t *Tuner) URL(r *http.Request) string { return t.Address(r.Host) }
-
-// Address is where the tuner is on a host, which may come with a port.
+// Address is where the tuner is on a host, which may come with a port. Use
+// the host a client reached, so its URLs work from wherever the client is.
 func (t *Tuner) Address(host string) string { return "http://" + host + t.device.Path }
 
 // Station is a channel of the lineup, and how many streams of it are open.
@@ -188,6 +185,7 @@ func (t *Tuner) Lineup() []Station {
 
 // discover describes the device. Plex reads it when the tuner is added.
 func (t *Tuner) discover(w http.ResponseWriter, r *http.Request) {
+	address := t.Address(r.Host)
 	writeJSON(w, map[string]any{
 		"FriendlyName":    "telesfor " + t.device.Name,
 		"Manufacturer":    "Silicondust",
@@ -197,8 +195,8 @@ func (t *Tuner) discover(w http.ResponseWriter, r *http.Request) {
 		"DeviceID":        t.device.ID,
 		"DeviceAuth":      "telesfor",
 		"TunerCount":      cmp.Or(t.device.Tuners, tunerCount),
-		"BaseURL":         t.URL(r),
-		"LineupURL":       t.URL(r) + "/lineup.json",
+		"BaseURL":         address,
+		"LineupURL":       address + "/lineup.json",
 	})
 }
 
@@ -216,13 +214,14 @@ func (t *Tuner) lineupStatus(w http.ResponseWriter, r *http.Request) {
 func (t *Tuner) lineupJSON(w http.ResponseWriter, r *http.Request) {
 	type entry struct{ GuideNumber, GuideName, URL string }
 
+	address := t.Address(r.Host)
 	lineup := t.channels()
 	entries := make([]entry, 0, len(lineup)) // an empty lineup is [], not null
 	for _, ch := range lineup {
 		entries = append(entries, entry{
 			GuideNumber: ch.number,
 			GuideName:   ch.Name,
-			URL:         t.URL(r) + "/stream/" + t.provider.Name() + "/" + url.PathEscape(ch.ID),
+			URL:         address + "/stream/" + t.provider.Name() + "/" + url.PathEscape(ch.ID),
 		})
 	}
 	writeJSON(w, entries)

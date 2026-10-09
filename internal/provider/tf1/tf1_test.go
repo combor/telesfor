@@ -15,8 +15,8 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/combor/telesfor/internal/httpclient"
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/providertest"
 	"github.com/combor/telesfor/internal/store"
 )
 
@@ -221,19 +221,6 @@ func (f *tf1) set(change func()) {
 	change()
 }
 
-// await waits for the provider's sign-in to reach a state.
-func await(t *testing.T, p *Provider, want provider.LoginState) provider.Login {
-	t.Helper()
-	for range 2000 {
-		if login := p.Login(); login.State == want {
-			return login
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("sign-in stands at %+v, want state %d", p.Login(), want)
-	return provider.Login{}
-}
-
 func TestSignIn(t *testing.T) {
 	db, err := store.Open(t.TempDir())
 	if err != nil {
@@ -293,7 +280,7 @@ func TestSignInFails(t *testing.T) {
 			t.Fatal(err)
 		}
 		// The account that was there stays.
-		if login := await(t, p, provider.SignedIn); login.Problem != want {
+		if login := providertest.Await(t, p, provider.SignedIn); login.Problem != want {
 			t.Errorf("code answered with %s: %+v, want the problem %q", code, login, want)
 		}
 	}
@@ -304,13 +291,7 @@ func TestSignInFails(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	for range 2000 {
-		if p.Login().Problem != "" {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	if login := p.Login(); login != (provider.Login{Problem: codeExpired}) {
+	if login := providertest.Await(t, p, provider.SignedOut); login != (provider.Login{Problem: codeExpired}) {
 		t.Errorf("code that ran out: %+v", login)
 	}
 
@@ -320,7 +301,7 @@ func TestSignInFails(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	await(t, p, provider.SignedIn)
+	providertest.Await(t, p, provider.SignedIn)
 	if waited := f.polled[1].Sub(f.polled[0]); len(f.polled) != 2 || waited < p.slower {
 		t.Errorf("asked about the code %d times, the second %s after the first: want it %s later", len(f.polled), waited, p.slower)
 	}
@@ -331,7 +312,7 @@ func TestSignOutGivesUpTheCode(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	await(t, p, provider.Pending)
+	providertest.Await(t, p, provider.Pending)
 	if err := p.SignOut(); err != nil {
 		t.Fatal(err)
 	}
@@ -442,13 +423,13 @@ func TestTokens(t *testing.T) {
 
 func TestStream(t *testing.T) {
 	f, p := signedIn(t)
-	for _, stream := range [][2]string{
+	for _, stream := range []struct{ channel, path string }{
 		{"tf1", "/pass1/prod/TF1/cmaf/out/TF1.m3u8"}, // as it is broadcast
 		{"tf1-series-films", "/pass2/prod/TF1-SERIES-FILMS/cmaf/out/TF1-SERIES-FILMS.m3u8"},
 		{"lci", "/pass3/prod/LCI/cmaf/out/LCI.m3u8"},
 	} {
-		if source, err := p.Stream(t.Context(), stream[0]); err != nil || source.URL != f.url+stream[1] {
-			t.Errorf("Stream(%s) = %+v, %v: want the master playlist at %s", stream[0], source, err, stream[1])
+		if source, err := p.Stream(t.Context(), stream.channel); err != nil || source.URL != f.url+stream.path {
+			t.Errorf("Stream(%s) = %+v, %v: want the master playlist at %s", stream.channel, source, err, stream.path)
 		}
 	}
 	slices.Sort(f.asked)
@@ -457,36 +438,44 @@ func TestStream(t *testing.T) {
 		t.Errorf("the player's API was asked for %q, want %q", f.asked, want)
 	}
 
-	for refusal, want := range map[string]string{
-		"GEOBLOCKED":        "-tf1-proxy",
-		"PERMISSION_DENIED": "no access to TFX",
-		"NOT_FOUND":         "TFX is unavailable: TF1 answers 403 NOT_FOUND",
-	} {
-		f.refusal = refusal
-		if _, err := p.Stream(t.Context(), "tfx"); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("Stream() refused with %s = %v, want an error with %q", refusal, err, want)
-		}
-	}
-	f.refusal, f.drm = "", true
-	if _, err := p.Stream(t.Context(), "tfx"); err == nil || !strings.Contains(err.Error(), "DRM") {
-		t.Errorf("Stream() of an encrypted channel = %v, want a DRM error", err)
-	}
-	f.drm, f.format = false, "dash"
-	if _, err := p.Stream(t.Context(), "tfx"); err == nil || !strings.Contains(err.Error(), "no HLS stream") {
-		t.Errorf("Stream() of a channel in another format = %v, want an error that says so", err)
-	}
-	if login := p.Login(); login != (provider.Login{State: provider.SignedIn}) {
-		t.Errorf("sign-in after refusals that say nothing of it: %+v", login)
-	}
-
 	_, signedOut := serve(t, nil)
-	if _, err := signedOut.Stream(t.Context(), "tfx"); err == nil || !strings.Contains(err.Error(), "sign in") {
-		t.Errorf("Stream() without an account = %v, want a call to sign in", err)
-	}
 	if _, err := signedOut.Stream(t.Context(), "lci"); err != nil {
 		t.Errorf("Stream() of LCI without an account = %v", err)
 	}
-	if source, err := signedOut.Stream(t.Context(), "tmc"); err == nil {
+}
+
+func TestStreamRefused(t *testing.T) {
+	tests := []struct {
+		name string
+		set  func(*tf1)
+		want string
+	}{
+		{"abroad", func(f *tf1) { f.refusal = "GEOBLOCKED" }, "-tf1-proxy"},
+		{"no access", func(f *tf1) { f.refusal = "PERMISSION_DENIED" }, "no access to TFX"},
+		{"gone", func(f *tf1) { f.refusal = "NOT_FOUND" }, "TFX is unavailable: TF1 answers 403 NOT_FOUND"},
+		{"encrypted", func(f *tf1) { f.drm = true }, "DRM"},
+		{"in another format", func(f *tf1) { f.format = "dash" }, "no HLS stream"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f, p := signedIn(t)
+			test.set(f)
+
+			_, err := p.Stream(t.Context(), "tfx")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Errorf("Stream() error = %v, want one mentioning %q", err, test.want)
+			}
+			if login := p.Login(); login != (provider.Login{State: provider.SignedIn}) {
+				t.Errorf("sign-in after a refusal that says nothing of it: %+v", login)
+			}
+		})
+	}
+
+	_, p := serve(t, nil)
+	if _, err := p.Stream(t.Context(), "tfx"); err == nil || !strings.Contains(err.Error(), "sign in") {
+		t.Errorf("Stream() without an account = %v, want a call to sign in", err)
+	}
+	if source, err := p.Stream(t.Context(), "tmc"); err == nil {
 		t.Errorf("Stream() of a channel that is not offered = %+v, want an error", source)
 	}
 }
@@ -499,61 +488,38 @@ func TestPass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	segments := *source.Client
-	transport, release := httpclient.SegmentTransport(source.Client.Transport)
-	defer release()
-	segments.Transport = transport
 	// As ffmpeg asks: always with the pass the stream started with.
-	fetch := func(client *http.Client, file string) (status int, body, from string) {
+	fetch := func(file string) (status int, body string) {
 		t.Helper()
-		resp, err := client.Get(f.url + "/pass1/prod/TFX/cmaf/out/" + file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		read, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, string(read), resp.Request.URL.Path
+		resp, body := providertest.Get(t, source.Client, f.url+"/pass1/prod/TFX/cmaf/out/"+file)
+		return resp.StatusCode, body
 	}
 
-	if status, body, _ := fetch(source.Client, "high.m3u8"); status != http.StatusOK || body != "TFX/high.m3u8" || f.passes != 1 {
+	if status, body := fetch("high.m3u8"); status != http.StatusOK || body != "TFX/high.m3u8" || f.passes != 1 {
 		t.Errorf("a playlist: %d %q with %d passes handed out", status, body, f.passes)
 	}
 	// The pass runs out: the stream goes on with a new one.
 	f.set(func() { f.expired["pass1"] = true })
-	status, _, from := fetch(source.Client, "high.m3u8")
-	if status != http.StatusOK || f.passes != 2 {
+	if status, _ := fetch("high.m3u8"); status != http.StatusOK || f.passes != 2 {
 		t.Errorf("after the pass ran out: %d with %d passes handed out, want 200 with a second", status, f.passes)
-	}
-	// What the playlist lists is found from where the playlist is, and so
-	// asked for with the first pass too.
-	if want := "/pass1/prod/TFX/cmaf/out/high.m3u8"; from != want {
-		t.Errorf("after the pass ran out, the playlist is from %s, want it from where it was asked for, %s", from, want)
-	}
-	if status, body, _ := fetch(&segments, "high-1.mp4"); status != http.StatusOK || body != "TFX/high-1.mp4" || f.passes != 2 {
-		t.Errorf("a segment after: %d %q with %d passes handed out, want it with the second", status, body, f.passes)
-	}
-	// A segment is the first to be refused as well.
-	f.set(func() { f.expired["pass2"] = true })
-	if status, _, _ := fetch(&segments, "high-2.mp4"); status != http.StatusOK || f.passes != 3 {
-		t.Errorf("a segment after the second pass ran out: %d with %d passes handed out, want 200 with a third", status, f.passes)
 	}
 
 	// An address outside France is refused with any pass.
 	f.set(func() { f.abroad = true })
-	if status, body, _ := fetch(source.Client, "high.m3u8"); status != http.StatusForbidden || !strings.Contains(body, "geoip") || f.passes != 3 {
+	if status, body := fetch("high.m3u8"); status != http.StatusForbidden || !strings.Contains(body, "geoip") || f.passes != 2 {
 		t.Errorf("outside France: %d %q with %d passes handed out, want TF1's refusal and no pass more", status, body, f.passes)
 	}
 	// A new pass that is refused is refused for something else.
-	f.set(func() { f.abroad, f.expired["pass3"] = false, true })
+	f.set(func() { f.abroad, f.expired["pass2"] = false, true })
 	p.rest = time.Hour
 	again, err := p.Stream(t.Context(), "tfx")
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.set(func() { f.expired["pass4"] = true })
-	resp, err := again.Client.Get(f.url + "/pass4/prod/TFX/cmaf/out/high.m3u8")
-	if err != nil || resp.StatusCode != http.StatusForbidden || f.passes != 4 {
-		t.Errorf("a new pass refused: %v, %v with %d passes handed out, want 403 and no pass more", resp, err, f.passes)
+	f.set(func() { f.expired["pass3"] = true })
+	resp, _ := providertest.Get(t, again.Client, f.url+"/pass3/prod/TFX/cmaf/out/high.m3u8")
+	if resp.StatusCode != http.StatusForbidden || f.passes != 3 {
+		t.Errorf("a new pass refused: %s with %d passes handed out, want 403 and no pass more", resp.Status, f.passes)
 	}
 }
 

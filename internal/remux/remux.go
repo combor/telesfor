@@ -78,7 +78,7 @@ func (r *Remuxer) route(name string) *route {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.routes[name] == nil {
-		r.routes[name] = &route{streams: map[*controller]float64{}}
+		r.routes[name] = &route{}
 	}
 	return r.routes[name]
 }
@@ -94,51 +94,47 @@ func (r *Remuxer) Copy(ctx context.Context, w io.Writer, s Stream) error {
 
 	// Only ffmpeg's HLS reader knows where a live stream is joined, and only
 	// HLS comes in qualities to choose from.
-	var qualities *ladder
 	upstream, err := url.Parse(s.Manifest)
-	hls := err == nil && path.Ext(upstream.Path) == ".m3u8"
-	if hls {
-		qualities = relay.qualities(ctx, s.Manifest)
+	if err != nil || path.Ext(upstream.Path) != ".m3u8" {
+		return r.single(ctx, w, relay, local) // ffmpeg refuses options it has no use for
 	}
-	if qualities == nil {
-		out := newReserve(w, relay.short.Load)
-		var join []string
-		if hls {
-			// ffmpeg refuses options it has no use for.
-			join = []string{"-live_start_index", strconv.Itoa(-headStart)}
-		}
-		cmd := r.command(ctx, local, join...)
-		cmd.Stdout = newAligner(out)
-		err = cmd.Run()
-		if ctx.Err() == nil { // not to a viewer who has left
-			err = cmp.Or(err, out.flush())
-		}
-		return err
+	if qualities := relay.qualities(ctx, s.Manifest); qualities != nil {
+		return r.play(ctx, w, s, relay, qualities)
 	}
+	return r.single(ctx, w, relay, local, "-live_start_index", strconv.Itoa(-headStart))
+}
 
-	gauge := newMeter(w)
-	ctl := newController(s.Name, qualities, r.route(s.Route), gauge.sent)
-	ctl.hold, ctl.calm = r.hold, r.calm
-	return r.play(ctx, gauge, relay, qualities, ctl)
+// single remuxes a stream that has no qualities to choose from.
+func (r *Remuxer) single(ctx context.Context, w io.Writer, relay *relay, local string, options ...string) error {
+	out := newReserve(w, relay.short.Load)
+	cmd := r.command(ctx, local, options...)
+	cmd.Stdout = newAligner(out)
+	err := cmd.Run()
+	if ctx.Err() == nil { // not to a viewer who has left
+		err = cmp.Or(err, out.flush())
+	}
+	return err
 }
 
 // play remuxes a stream that comes in more than one quality: a leg at a time,
 // each read by an ffmpeg of its own. See stage.
-func (r *Remuxer) play(ctx context.Context, gauge *meter, relay *relay, qualities *ladder, ctl *controller) (err error) {
+func (r *Remuxer) play(ctx context.Context, w io.Writer, s Stream, relay *relay, qualities *ladder) (err error) {
+	gauge := newMeter(w)
+	ctl := newController(s.Name, qualities, r.route(s.Route), gauge.sent)
+	ctl.hold, ctl.calm = r.hold, r.calm
 	defer ctl.end()
 	out := newReserve(gauge, relay.short.Load)
-	w := newSplicer(newAligner(out))
+	splice := newSplicer(newAligner(out))
 	defer func() {
 		if ctx.Err() == nil { // not to a viewer who has left
 			err = cmp.Or(err, out.flush())
 		}
 	}()
 
-	var st *stage
-	st, err = relay.perform(qualities, ctl, gauge, func(l *leg) error {
+	st, err := openStage(relay, qualities, ctl, gauge, func(l *leg, input string) error {
 		ctx, stop := context.WithCancel(ctx)
 		// The stage has each leg begin with its first segment.
-		cmd := r.command(ctx, st.input(l), "-live_start_index", "0")
+		cmd := r.command(ctx, input, "-live_start_index", "0")
 		written, err := cmd.StdoutPipe()
 		if err == nil {
 			err = cmd.Start()
@@ -160,7 +156,7 @@ func (r *Remuxer) play(ctx context.Context, gauge *meter, relay *relay, qualitie
 		return fmt.Errorf("remux: starting ffmpeg: %w", err)
 	}
 	for {
-		n, err := io.Copy(w, l.out)
+		n, err := io.Copy(splice, l.out)
 		if err != nil {
 			l.stop() // its ffmpeg would wait for somebody to take what it writes
 		}
@@ -171,21 +167,17 @@ func (r *Remuxer) play(ctx context.Context, gauge *meter, relay *relay, qualitie
 			return cmp.Or(err, ended)
 		}
 		// How the ffmpeg of a leg ended matters only if the stream fails with it.
-		next, over, err := st.after(l, n > 0)
-		if over {
-			return nil
+		if l, err = st.after(l, n > 0, ended); l == nil {
+			return err
 		}
-		if l = next; l == nil {
-			return cmp.Or(err, ended)
-		}
-		if l.anew {
+		if l.startsOver {
 			// What the ffmpeg before had written has gone nowhere: the
 			// stream starts over.
 			out = newReserve(gauge, relay.short.Load)
-			w = newSplicer(newAligner(out))
+			splice = newSplicer(newAligner(out))
 			gauge.started()
 		} else {
-			w.next()
+			splice.next()
 		}
 	}
 }

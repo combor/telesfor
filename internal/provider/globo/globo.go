@@ -92,7 +92,7 @@ func New(proxy string, db *bolt.DB) (*Provider, error) {
 		codeLife:  5 * time.Minute, // measured: Globo does not say
 	}
 	if p.account, err = load(db); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("globo: %w", err)
 	}
 	return p, nil
 }
@@ -311,7 +311,7 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 		return provider.Source{}, errors.New("globo: blocked outside Brazil: set -globo-proxy to a proxy with a Brazilian exit, or try another exit")
 	case answer.Code == "login-required":
 		p.expire(signedIn)
-		return provider.Source{}, errors.New("globo: the sign-in has expired: sign in again on telesfor's settings page")
+		return provider.Source{}, fmt.Errorf("globo: %w", errExpired)
 	case answer.Code == "user-not-authorized":
 		return provider.Source{}, errors.New("globo: the account has no access to this channel")
 	case status != http.StatusOK:

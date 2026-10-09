@@ -81,7 +81,7 @@ func New(proxy string, db *bolt.DB) (*Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("wppilot: %w", err)
 	}
-	client.Transport = agent{client.Transport}
+	client.Transport = httpclient.Wrap(client.Transport, agent)
 	p := &Provider{
 		client:   client,
 		db:       db,
@@ -90,7 +90,7 @@ func New(proxy string, db *bolt.DB) (*Provider, error) {
 		codeLife: 15 * time.Minute, // measured: WP does not say
 	}
 	if p.account, err = load(db); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("wppilot: %w", err)
 	}
 	return p, nil
 }
@@ -581,21 +581,12 @@ func (p *Provider) send(ctx context.Context, signedIn *account, method, address 
 	return got, sent, nil
 }
 
-// agent is the transport of the provider's HTTP client. It names the browser
-// in every request, to WP's API and to its stream servers alike.
-type agent struct{ http.RoundTripper }
-
-func (a agent) RoundTrip(req *http.Request) (*http.Response, error) {
+// agent names the browser in every request, to WP's API and its stream
+// servers alike.
+func agent(req *http.Request, next http.RoundTripper) (*http.Response, error) {
 	out := req.Clone(req.Context())
 	out.Header.Set("User-Agent", browser)
-	return a.RoundTripper.RoundTrip(out)
-}
-
-// SegmentTransport keeps the name on segment requests, which go over the
-// separate connection pool.
-func (a agent) SegmentTransport() (http.RoundTripper, func()) {
-	transport, release := httpclient.SegmentTransport(a.RoundTripper)
-	return agent{transport}, release
+	return next.RoundTrip(out)
 }
 
 func seconds(n float64) time.Duration { return time.Duration(n * float64(time.Second)) }

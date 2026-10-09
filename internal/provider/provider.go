@@ -2,15 +2,14 @@
 // telesfor.
 //
 // To add a source, implement Provider in a package under internal/provider and
-// give it a tuner in cmd/telesfor/main.go. The tuner comes with a tab on the
-// settings page, where an Account has its sign-in and Settings bring a part of
-// their own.
+// add a row for it to sources in cmd/telesfor/main.go, which gives it a tuner
+// and a proxy flag. The tuner comes with a tab on the settings page, where an
+// Account has its sign-in.
 package provider
 
 import (
 	"context"
 	"fmt"
-	"html/template"
 	"net/http"
 	"net/url"
 	"time"
@@ -123,19 +122,3 @@ const (
 	SignedIn
 	Expired // the provider no longer accepts the sign-in: the user has to sign in again
 )
-
-// Settings is a Provider with settings of its own. It writes its part of the
-// settings page itself, and takes what the user sends from there.
-type Settings interface {
-	Provider
-
-	// SettingsHTML is the provider's part of its tab, in HTML that uses the
-	// page's stylesheet. Its forms post to action. It is asked for every time
-	// the page refreshes.
-	SettingsHTML(action string) (template.HTML, error)
-
-	// Configure takes what one of those forms sent. What went wrong is for
-	// SettingsHTML to show: the page returns to the tab. The provider is then
-	// asked for its channels again, in case the settings change them.
-	Configure(ctx context.Context, form url.Values) error
-}

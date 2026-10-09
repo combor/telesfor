@@ -2,7 +2,6 @@ package wppilot
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/providertest"
 	"github.com/combor/telesfor/internal/store"
 )
 
@@ -60,6 +60,7 @@ func TestLive(t *testing.T) {
 		with := 0 // channels that WP lists programmes of
 		for _, channel := range channels {
 			count, listed, pictures := 0, 0, 0
+			// Not providertest.Covered: WP may list a programme within another.
 			covered := from // the guide has no gap up to here
 			for _, programme := range programmes {
 				if programme.ChannelID != channel.ID {
@@ -107,26 +108,10 @@ func TestLive(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			get := func(address string) (*http.Response, string) {
-				req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
-				if err != nil {
-					t.Fatal(err)
-				}
-				resp, err := source.Client.Do(req)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer resp.Body.Close()
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					t.Fatal(err)
-				}
-				return resp, string(body)
-			}
 			// What is played is the master, with the qualities to choose
 			// from and their sound. The first quality in it tells whether
 			// the stream can be played.
-			resp, master := get(source.URL)
+			resp, master := providertest.Get(t, source.Client, source.URL)
 			if strings.Count(master, "#EXT-X-STREAM-INF:") < 2 || !strings.Contains(master, "TYPE=AUDIO") {
 				t.Fatalf("the master playlist: %s, want more than one quality and the sound:\n%s", resp.Status, master)
 			}
@@ -137,7 +122,7 @@ func TestLive(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resp, playlist := get(address.String())
+			resp, playlist := providertest.Get(t, source.Client, address.String())
 			if resp.StatusCode != http.StatusOK || !strings.Contains(playlist, "#EXTINF") || strings.Contains(playlist, "#EXT-X-KEY") {
 				t.Errorf("playlist: %s, starting %.40q: want an HLS playlist of one quality, in the clear", resp.Status, playlist)
 			}

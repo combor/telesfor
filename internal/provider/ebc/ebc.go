@@ -7,13 +7,11 @@ package ebc
 import (
 	"context"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,9 +26,6 @@ const (
 
 	// guideDay is the format of a day in the guide's address.
 	guideDay = "20060102"
-
-	// block is how long a placeholder lasts in the guide.
-	block = time.Hour
 
 	// What a placeholder says of itself.
 	unlisted = "EBC has published no listings for this time."
@@ -95,12 +90,7 @@ func New(proxy string) (*Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ebc: %w", err)
 	}
-	return through(client, channels), nil
-}
-
-// through returns a provider that reaches the channels with client.
-func through(client *http.Client, channels []channel) *Provider {
-	return &Provider{client: client, channels: channels}
+	return &Provider{client: client, channels: channels}, nil
 }
 
 // Name implements provider.Provider.
@@ -133,17 +123,14 @@ func (p *Provider) Programmes(ctx context.Context, channels []provider.Channel, 
 				return nil, fmt.Errorf("ebc: fetching guide: nothing on %s", ch.name)
 			}
 		}
-		programmes = append(programmes, fill(listed, known, from, to)...)
+		programmes = append(programmes, provider.Fill(listed, known, from, to, unlisted)...)
 	}
 	return programmes, nil
 }
 
 // row is a line of a day's listing: the time a programme starts at, then its
 // name, mostly as a link to its page.
-var (
-	row = regexp.MustCompile(`(?s)class="date-display-single">(\d\d:\d\d)</span>\s*</div>\s*<div[^>]*nomeprograma">(.*?)</div>`)
-	tag = regexp.MustCompile(`<[^>]*>`)
-)
+var row = regexp.MustCompile(`(?s)class="date-display-single">(\d\d:\d\d)</span>\s*</div>\s*<div[^>]*nomeprograma">(.*?)</div>`)
 
 // listings returns what a channel's guide has between from and to.
 //
@@ -151,11 +138,7 @@ var (
 // So a programme runs until the next one starts, which for the last of a day
 // is the first of the next. That takes the days around those asked for.
 func (p *Provider) listings(ctx context.Context, ch channel, from, to time.Time) ([]provider.Programme, error) {
-	type slot struct {
-		start time.Time
-		title string
-	}
-	var slots []slot
+	var listed []provider.Programme
 	year, month, day := from.In(brt).Date()
 	first, last := time.Date(year, month, day-1, 0, 0, 0, 0, brt), to.AddDate(0, 0, 1)
 	for day := first; !day.After(last); day = day.AddDate(0, 0, 1) {
@@ -173,57 +156,17 @@ func (p *Provider) listings(ctx context.Context, ch channel, from, to time.Time)
 			if err != nil {
 				continue
 			}
-			slots = append(slots, slot{
-				start: day.Add(time.Duration(clock.Hour())*time.Hour + time.Duration(clock.Minute())*time.Minute),
-				title: strings.TrimSpace(html.UnescapeString(tag.ReplaceAllString(line[2], ""))),
-			})
-		}
-	}
-
-	var programmes []provider.Programme
-	for i := 0; i < len(slots)-1; i++ {
-		start, stop := slots[i].start, slots[i+1].start
-		// A day or more until the next programme is a day the guide lacks:
-		// when this one ends is not known.
-		if !stop.After(start) || stop.Sub(start) >= 24*time.Hour || !stop.After(from) || !start.Before(to) {
-			continue
-		}
-		programme := provider.Programme{ChannelID: ch.id, Title: slots[i].title, Start: start, Stop: stop}
-		if programme.Title == "" {
-			programme.Title, programme.Description = ch.name, unnamed
-		}
-		programmes = append(programmes, programme)
-	}
-	return programmes, nil
-}
-
-// fill returns the programmes of a channel with a placeholder wherever there
-// is none between from and to: the channel's name, an hour at a time by the
-// clock.
-func fill(ch provider.Channel, known []provider.Programme, from, to time.Time) []provider.Programme {
-	var programmes []provider.Programme
-	at := from
-	until := func(next time.Time) {
-		for at.Before(next) {
-			stop := at.Truncate(block).Add(block)
-			if stop.After(next) {
-				stop = next
+			programme := provider.Programme{
+				Title: provider.PlainText(line[2]),
+				Start: day.Add(time.Duration(clock.Hour())*time.Hour + time.Duration(clock.Minute())*time.Minute),
 			}
-			programmes = append(programmes, provider.Programme{
-				ChannelID: ch.ID, Title: ch.Name, Description: unlisted, Start: at, Stop: stop,
-			})
-			at = stop
+			if programme.Title == "" {
+				programme.Title, programme.Description = ch.name, unnamed
+			}
+			listed = append(listed, programme)
 		}
 	}
-	for _, programme := range known {
-		until(programme.Start)
-		programmes = append(programmes, programme)
-		if programme.Stop.After(at) {
-			at = programme.Stop
-		}
-	}
-	until(to)
-	return programmes
+	return provider.UntilNext(ch.id, listed, from, to), nil
 }
 
 // Stream returns the channel's master playlist, once a look at it finds the
@@ -236,18 +179,18 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 	}
 	master, at, err := p.playlist(ctx, ch, ch.stream)
 	if err != nil {
-		return provider.Source{}, err
+		return provider.Source{}, fmt.Errorf("ebc: %w", err)
 	}
 	// Whether the stream is encrypted, or has stopped, shows in the playlist
 	// of a quality: the best, which is the one most likely to be played.
 	media := master
-	if uri := quality(master); uri != "" {
+	if uri := provider.BestQuality(master); uri != "" {
 		address, err := at.Parse(uri)
 		if err != nil {
 			return provider.Source{}, fmt.Errorf("ebc: %s is unavailable: %w", ch.name, err)
 		}
 		if media, _, err = p.playlist(ctx, ch, address.String()); err != nil {
-			return provider.Source{}, err
+			return provider.Source{}, fmt.Errorf("ebc: %w", err)
 		}
 	}
 	switch {
@@ -270,38 +213,17 @@ func (p *Provider) find(id string) (channel, bool) {
 	return p.channels[i], true
 }
 
-// quality returns the URI of the highest quality in a master playlist, or ""
-// for a playlist that is not one.
-func quality(master string) (uri string) {
-	lines := strings.Split(master, "\n")
-	most := -1
-	for i, line := range lines {
-		attributes, ok := strings.CutPrefix(line, "#EXT-X-STREAM-INF:")
-		if !ok || i+1 >= len(lines) {
-			continue
-		}
-		for attribute := range strings.SplitSeq(attributes, ",") {
-			if bandwidth, ok := strings.CutPrefix(attribute, "BANDWIDTH="); ok {
-				if n, _ := strconv.Atoi(strings.TrimSpace(bandwidth)); n > most {
-					most, uri = n, strings.TrimSpace(lines[i+1])
-				}
-			}
-		}
-	}
-	return uri
-}
-
 // playlist fetches an HLS playlist of a channel, and returns it with the
 // address it came from.
 func (p *Provider) playlist(ctx context.Context, ch channel, address string) (string, *url.URL, error) {
 	page, at, status, err := p.get(ctx, address)
 	switch {
 	case err != nil:
-		return "", nil, fmt.Errorf("ebc: reaching %s: %w", ch.name, err)
+		return "", nil, fmt.Errorf("reaching %s: %w", ch.name, err)
 	case status != http.StatusOK:
-		return "", nil, fmt.Errorf("ebc: %w", refusal(ch.name, status))
+		return "", nil, refusal(ch.name, status)
 	case !strings.HasPrefix(page, "#EXTM3U"):
-		return "", nil, fmt.Errorf("ebc: %s is unavailable: EBC sends no playlist", ch.name)
+		return "", nil, fmt.Errorf("%s is unavailable: EBC sends no playlist", ch.name)
 	}
 	return page, at, nil
 }

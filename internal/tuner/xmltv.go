@@ -126,18 +126,26 @@ func (t *Tuner) keepFresh(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		}
-		wait := guideRefresh
-		if g := t.currentGuide(); g != nil && time.Since(g.made) < guideRefresh {
+		var wait time.Duration
+		if g := t.currentGuide(); g != nil {
 			wait = guideRefresh - time.Since(g.made) // fetched meanwhile, by a request or an earlier pass
-			retry = guideRetry                       // a fetch succeeded, whosever it was
-		} else if _, err := t.fetchGuide(ctx); err != nil && ctx.Err() == nil {
+		}
+		var err error
+		if wait <= 0 {
+			wait = guideRefresh
+			_, err = t.fetchGuide(ctx)
+		}
+		<-t.fetching
+		switch {
+		case ctx.Err() != nil:
+			return
+		case err != nil:
 			slog.Error("guide refresh failed", "provider", t.provider.Name(), "err", err)
 			// A source that stays down is asked less and less often.
 			wait, retry = retry, min(2*retry, guideRefresh)
-		} else {
-			retry = guideRetry
+		default:
+			retry = guideRetry // a fetch succeeded, whosever it was
 		}
-		<-t.fetching
 		select {
 		case <-ctx.Done():
 			return

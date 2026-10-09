@@ -1,4 +1,5 @@
-// Package httpclient isolates fetches that may be abandoned from other traffic.
+// Package httpclient fetches segments over HTTP/1.1, so giving one up closes
+// only its own connection, not an HTTP/2 one the playlists share.
 package httpclient
 
 import "net/http"
@@ -7,22 +8,33 @@ type transport struct {
 	base, http1 *http.Transport
 }
 
-// NewTransport keeps the ordinary and segment connection pools together.
+// NewTransport returns base with an HTTP/1.1 pool beside it for segments.
 func NewTransport(base *http.Transport) http.RoundTripper {
 	return &transport{base: base, http1: segmentPool(base)}
 }
 
-// SegmentTransport selects a segment pool and returns a release function for
-// any pool it creates. Wrappers implement the same method to preserve their
-// request handling. Other transports keep their original protocol and ownership.
-func SegmentTransport(base http.RoundTripper) (http.RoundTripper, func()) {
+// Wrap returns a transport that passes every request, segments too, to send.
+func Wrap(next http.RoundTripper, send func(req *http.Request, next http.RoundTripper) (*http.Response, error)) http.RoundTripper {
+	return &wrapped{through{next, send}}
+}
+
+// SegmentClient returns a copy of client on its segment pool, and a func that
+// releases the pool.
+func SegmentClient(client *http.Client) (*http.Client, func()) {
+	segments := *client
+	var release func()
+	segments.Transport, release = segmentTransport(client.Transport)
+	return &segments, release
+}
+
+func segmentTransport(base http.RoundTripper) (http.RoundTripper, func()) {
 	if base == nil {
 		base = http.DefaultTransport
 	}
 	if t, ok := base.(interface {
-		SegmentTransport() (http.RoundTripper, func())
+		segments() (http.RoundTripper, func())
 	}); ok {
-		return t.SegmentTransport()
+		return t.segments()
 	}
 	if t, ok := base.(*http.Transport); ok {
 		pool := segmentPool(t)
@@ -50,11 +62,28 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(req)
 }
 
-func (t *transport) SegmentTransport() (http.RoundTripper, func()) {
+func (t *transport) segments() (http.RoundTripper, func()) {
 	return t.http1, func() {}
 }
 
 func (t *transport) CloseIdleConnections() {
 	t.base.CloseIdleConnections()
 	t.http1.CloseIdleConnections()
+}
+
+type through struct {
+	next http.RoundTripper
+	send func(*http.Request, http.RoundTripper) (*http.Response, error)
+}
+
+func (t *through) RoundTrip(req *http.Request) (*http.Response, error) {
+	return t.send(req, t.next)
+}
+
+// wrapped's segment transport is a plain through: it has no pool to hand out.
+type wrapped struct{ through }
+
+func (w *wrapped) segments() (http.RoundTripper, func()) {
+	next, release := segmentTransport(w.next)
+	return &through{next, w.send}, release
 }

@@ -1,7 +1,6 @@
 package tvp
 
 import (
-	"io"
 	"net/http"
 	"os"
 	"slices"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/providertest"
 )
 
 // TestLive checks the provider against TVP's real API, which the fixtures of
@@ -79,18 +79,9 @@ func TestLive(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, source.URL, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp, err := source.Client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		manifest, err := io.ReadAll(resp.Body)
-		if err != nil || resp.StatusCode != http.StatusOK || !strings.HasPrefix(string(manifest), "#EXTM3U") {
-			t.Errorf("manifest: %s, %v, starting %.40q: want an HLS playlist", resp.Status, err, manifest)
+		resp, manifest := providertest.Get(t, source.Client, source.URL)
+		if resp.StatusCode != http.StatusOK || !strings.HasPrefix(manifest, "#EXTM3U") {
+			t.Errorf("manifest: %s, starting %.40q: want an HLS playlist", resp.Status, manifest)
 		}
 	})
 }

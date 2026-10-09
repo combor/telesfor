@@ -17,13 +17,8 @@ import (
 	"github.com/combor/telesfor/internal/provider"
 )
 
-const (
-	// block is how long a placeholder lasts in the guide.
-	block = time.Hour
-
-	// unlisted is what a placeholder says of itself.
-	unlisted = "TF1 has published no listings for this time."
-)
+// unlisted is what a placeholder says of itself.
+const unlisted = "TF1 has published no listings for this time."
 
 // paris is the time TF1's guide is laid out in.
 var paris = func() *time.Location {
@@ -64,7 +59,7 @@ func (p *Provider) Programmes(ctx context.Context, listed []provider.Channel, fr
 		if failed[i] != nil {
 			return nil, fmt.Errorf("tf1: fetching guide: %w", failed[i])
 		}
-		programmes = append(programmes, fill(l, known[i], from, to)...)
+		programmes = append(programmes, provider.Fill(l, known[i], from, to, unlisted)...)
 	}
 	return programmes, nil
 }
@@ -89,20 +84,7 @@ func (p *Provider) listings(ctx context.Context, ch channel, from, to time.Time)
 		}
 		listed = append(listed, broadcast(page, day, address)...)
 	}
-
-	var programmes []provider.Programme
-	for i := 0; i < len(listed)-1; i++ {
-		programme := listed[i]
-		programme.ChannelID, programme.Stop = ch.id, listed[i+1].Start
-		// A day or more until the next programme is a day the guide lacks:
-		// when this one ends is not known.
-		if programme.Title == "" || !programme.Stop.After(programme.Start) || programme.Stop.Sub(programme.Start) >= 24*time.Hour ||
-			!programme.Stop.After(from) || !programme.Start.Before(to) {
-			continue
-		}
-		programmes = append(programmes, programme)
-	}
-	return programmes, nil
+	return provider.UntilNext(ch.id, listed, from, to), nil
 }
 
 // What a day of the guide has of a programme: the time it starts at, its
@@ -114,7 +96,6 @@ var (
 	episode = regexp.MustCompile(`(?s)class="episode">(.*?)</div>`)
 	about   = regexp.MustCompile(`(?s)class="resume">(.*?)</div>`)
 	picture = regexp.MustCompile(`<source srcset="([^" ]+)`)
-	tag     = regexp.MustCompile(`<[^>]*>`)
 )
 
 // broadcast reads a day of the guide, found at an address. It is a day of the
@@ -142,11 +123,11 @@ func broadcast(page string, day time.Time, address string) []provider.Programme 
 		last = hours*60 + minutes
 		programme := provider.Programme{Start: time.Date(year, month, date, hours, minutes, 0, 0, paris)}
 		if title := name.FindStringSubmatch(row); title != nil {
-			programme.Title = text(title[1])
+			programme.Title = provider.PlainText(title[1])
 		}
 		for _, part := range []*regexp.Regexp{episode, about} {
 			if found := part.FindStringSubmatch(row); found != nil {
-				programme.Description = strings.TrimSpace(programme.Description + "\n" + text(found[1]))
+				programme.Description = strings.TrimSpace(programme.Description + "\n" + provider.PlainText(found[1]))
 			}
 		}
 		if src := picture.FindStringSubmatch(row); src != nil && at != nil {
@@ -156,46 +137,6 @@ func broadcast(page string, day time.Time, address string) []provider.Programme 
 		}
 		programmes = append(programmes, programme)
 	}
-	return programmes
-}
-
-// text returns the words of a piece of HTML, a paragraph to a line.
-func text(markup string) string {
-	var lines []string
-	for line := range strings.Lines(html.UnescapeString(tag.ReplaceAllString(markup, ""))) {
-		if words := strings.Join(strings.Fields(line), " "); words != "" {
-			lines = append(lines, words)
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-// fill returns the programmes of a channel with a placeholder wherever there
-// is none between from and to: the channel's name, an hour at a time by the
-// clock.
-func fill(ch provider.Channel, known []provider.Programme, from, to time.Time) []provider.Programme {
-	var programmes []provider.Programme
-	at := from
-	until := func(next time.Time) {
-		for at.Before(next) {
-			stop := at.Truncate(block).Add(block)
-			if stop.After(next) {
-				stop = next
-			}
-			programmes = append(programmes, provider.Programme{
-				ChannelID: ch.ID, Title: ch.Name, Description: unlisted, Start: at, Stop: stop,
-			})
-			at = stop
-		}
-	}
-	for _, programme := range known {
-		until(programme.Start)
-		programmes = append(programmes, programme)
-		if programme.Stop.After(at) {
-			at = programme.Stop
-		}
-	}
-	until(to)
 	return programmes
 }
 

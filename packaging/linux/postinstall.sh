@@ -17,6 +17,6 @@ if [ -d /run/systemd/system ]; then
 fi
 
 if [ -z "$upgrade" ]; then
-	echo "Outside Poland, set TELESFOR_TVP_PROXY in /etc/telesfor/telesfor.env. Start telesfor with:"
+	echo "Set the proxies you need in /etc/telesfor/telesfor.env, then start telesfor with:"
 	echo "  systemctl enable --now telesfor"
 fi

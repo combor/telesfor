@@ -7,7 +7,6 @@ package cultura
 import (
 	"context"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -24,9 +23,6 @@ const (
 	// guideDay is the format of a day in the guide's address, which keeps a
 	// day to a page: /grade/05102026.html.
 	guideDay = "02012006"
-
-	// block is how long a placeholder lasts in the guide.
-	block = time.Hour
 
 	// unlisted is what a placeholder says of itself.
 	unlisted = "TV Cultura has no reliable listings for this time."
@@ -117,7 +113,7 @@ func (p *Provider) Programmes(ctx context.Context, channels []provider.Channel, 
 				return nil, fmt.Errorf("cultura: fetching guide: nothing on %s", ch.name)
 			}
 		}
-		programmes = append(programmes, fill(listed, known, from, to)...)
+		programmes = append(programmes, provider.Fill(listed, known, from, to, unlisted)...)
 	}
 	return programmes, nil
 }
@@ -143,21 +139,7 @@ func (p *Provider) listings(ctx context.Context, ch channel, from, to time.Time)
 		}
 		listed = append(listed, broadcast(page, day)...)
 	}
-
-	var programmes []provider.Programme
-	for i := 0; i < len(listed)-1; i++ {
-		programme := listed[i]
-		programme.ChannelID, programme.Stop = ch.id, listed[i+1].Start
-		// A day or more until the next programme is a day the guide lacks:
-		// when this one ends is not known. One without a name is time with
-		// nothing listed.
-		if programme.Title == "" || !programme.Stop.After(programme.Start) || programme.Stop.Sub(programme.Start) >= 24*time.Hour ||
-			!programme.Stop.After(from) || !programme.Start.Before(to) {
-			continue
-		}
-		programmes = append(programmes, programme)
-	}
-	return programmes, nil
+	return provider.UntilNext(ch.id, listed, from, to), nil
 }
 
 // What a day of the guide has of a programme: the time it starts at, its
@@ -168,7 +150,6 @@ var (
 	name    = regexp.MustCompile(`(?s)<h3>(.*?)</h3>`)
 	picture = regexp.MustCompile(`<img src="([^"]*)"`)
 	more    = regexp.MustCompile(`(?s)<section class="mais">\s*<section>\s*(?:<h2>(.*?)</h2>)?\s*<div>(.*?)</div>`)
-	tag     = regexp.MustCompile(`<[^>]*>`)
 )
 
 // broadcast reads a day of the guide, which is a day of the broadcast: it
@@ -189,10 +170,10 @@ func broadcast(page string, day time.Time) []provider.Programme {
 			programme.Start = programme.Start.AddDate(0, 0, 1)
 		}
 		if title := name.FindStringSubmatch(entry); title != nil {
-			programme.Title = text(title[1])
+			programme.Title = provider.PlainText(title[1])
 		}
 		if about := more.FindStringSubmatch(entry); about != nil {
-			programme.Description = strings.TrimSpace(text(about[1]) + "\n" + text(about[2]))
+			programme.Description = strings.TrimSpace(provider.PlainText(about[1]) + "\n" + provider.PlainText(about[2]))
 		}
 		// A programme without a picture has one of the site's own in its
 		// place, at an address within the site.
@@ -201,46 +182,6 @@ func broadcast(page string, day time.Time) []provider.Programme {
 		}
 		programmes = append(programmes, programme)
 	}
-	return programmes
-}
-
-// text returns the words of a piece of HTML, a paragraph to a line.
-func text(markup string) string {
-	var lines []string
-	for line := range strings.Lines(html.UnescapeString(tag.ReplaceAllString(markup, ""))) {
-		if words := strings.Join(strings.Fields(line), " "); words != "" {
-			lines = append(lines, words)
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-// fill returns the programmes of a channel with a placeholder wherever there
-// is none between from and to: the channel's name, an hour at a time by the
-// clock.
-func fill(ch provider.Channel, known []provider.Programme, from, to time.Time) []provider.Programme {
-	var programmes []provider.Programme
-	at := from
-	until := func(next time.Time) {
-		for at.Before(next) {
-			stop := at.Truncate(block).Add(block)
-			if stop.After(next) {
-				stop = next
-			}
-			programmes = append(programmes, provider.Programme{
-				ChannelID: ch.ID, Title: ch.Name, Description: unlisted, Start: at, Stop: stop,
-			})
-			at = stop
-		}
-	}
-	for _, programme := range known {
-		until(programme.Start)
-		programmes = append(programmes, programme)
-		if programme.Stop.After(at) {
-			at = programme.Stop
-		}
-	}
-	until(to)
 	return programmes
 }
 
@@ -254,18 +195,18 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 	}
 	master, at, err := p.playlist(ctx, ch, ch.stream)
 	if err != nil {
-		return provider.Source{}, err
+		return provider.Source{}, fmt.Errorf("cultura: %w", err)
 	}
 	// Whether the stream is encrypted, or has stopped, shows in the playlist
 	// of its one quality.
 	media := master
-	if uri := quality(master); uri != "" {
+	if uri := provider.BestQuality(master); uri != "" {
 		address, err := at.Parse(uri)
 		if err != nil {
 			return provider.Source{}, fmt.Errorf("cultura: %s is unavailable: %w", ch.name, err)
 		}
 		if media, _, err = p.playlist(ctx, ch, address.String()); err != nil {
-			return provider.Source{}, err
+			return provider.Source{}, fmt.Errorf("cultura: %w", err)
 		}
 	}
 	switch {
@@ -289,33 +230,17 @@ func (p *Provider) find(id string) (channel, bool) {
 	return p.channels[i], true
 }
 
-// quality returns the URI of the first quality in a master playlist, which is
-// the only one in a channel's, or "" for a playlist that is not one.
-func quality(master string) string {
-	listed := false // the line before announced a quality
-	for line := range strings.Lines(master) {
-		line = strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
-			listed = true
-		case listed && line != "" && !strings.HasPrefix(line, "#"):
-			return line
-		}
-	}
-	return ""
-}
-
 // playlist fetches an HLS playlist of a channel, and returns it with the
 // address it came from.
 func (p *Provider) playlist(ctx context.Context, ch channel, address string) (string, *url.URL, error) {
 	page, at, status, err := p.get(ctx, address)
 	switch {
 	case err != nil:
-		return "", nil, fmt.Errorf("cultura: reaching %s: %w", ch.name, err)
+		return "", nil, fmt.Errorf("reaching %s: %w", ch.name, err)
 	case status != http.StatusOK:
-		return "", nil, fmt.Errorf("cultura: %w", refusal(ch.name, status))
+		return "", nil, refusal(ch.name, status)
 	case !strings.HasPrefix(page, "#EXTM3U"):
-		return "", nil, fmt.Errorf("cultura: %s is unavailable: TV Cultura sends no playlist", ch.name)
+		return "", nil, fmt.Errorf("%s is unavailable: TV Cultura sends no playlist", ch.name)
 	}
 	return page, at, nil
 }

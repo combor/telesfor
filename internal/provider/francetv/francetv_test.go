@@ -1,7 +1,6 @@
 package francetv
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/combor/telesfor/internal/httpclient"
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/providertest"
 )
 
 // The playlists of a channel, as France Télévisions lays them out: six
@@ -72,17 +71,16 @@ type france struct {
 	reason string                      // and the reason that comes with it
 	delay  time.Duration               // how long the apps' API takes over an answer
 
-	video    string              // what the player's API says of France 2's stream
-	refused  int                 // if set, how the player's API answers instead
-	passes   int                 // how many passes have been handed out
-	revoked  map[string]bool     // the passes that are good no more
-	index    string              // the playlist a stream is handed out at: a master, mostly
-	media    string              // the playlist of a quality
-	blocked  map[string]int      // how the servers answer for a file, if not with it
-	ranged   map[string]bool     // the files asked for by range
-	fetched  map[string]int      // how often each file was asked for
-	directed int                 // how often the list of live channels was asked for
-	_        map[string]struct{} // keeps the struct from being compared
+	video    string          // what the player's API says of France 2's stream
+	refused  int             // if set, how the player's API answers instead
+	passes   int             // how many passes have been handed out
+	revoked  map[string]bool // the passes that are good no more
+	index    string          // the playlist a stream is handed out at: a master, mostly
+	media    string          // the playlist of a quality
+	blocked  map[string]int  // how the servers answer for a file, if not with it
+	ranged   map[string]bool // the files asked for by range, with a good pass
+	fetched  map[string]int  // how often each file was asked for
+	directed int             // how often the list of live channels was asked for
 }
 
 // serve starts a fake France Télévisions and returns it with a provider that
@@ -155,11 +153,13 @@ func serve(t *testing.T) (*france, *Provider) {
 		defer f.mu.Unlock()
 		file := r.PathValue("file")
 		f.fetched[file]++
-		f.ranged[file] = f.ranged[file] || r.Header.Get("Range") != ""
-		switch {
-		case f.revoked[r.PathValue("pass")]:
+		if f.revoked[r.PathValue("pass")] {
 			w.Header().Set("X-ErrorType", "ltoken")
 			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		f.ranged[file] = f.ranged[file] || r.Header.Get("Range") != ""
+		switch {
 		case answer(w, f.blocked[file]):
 		case file == "index.m3u8":
 			io.WriteString(w, f.index)
@@ -265,11 +265,10 @@ func TestProgrammes(t *testing.T) {
 	paris := time.FixedZone("CEST", 2*60*60)
 	var shown []string
 	for _, programme := range programmes {
-		line := fmt.Sprintf("%s to %s: %s", programme.Start.In(paris).Format("Mon 15:04"), programme.Stop.In(paris).Format("Mon 15:04"), programme.Title)
-		if programme.Description == unlisted {
-			line += " (unlisted)"
+		if programme.Title == "France 2" && programme.Description == unlisted {
+			continue
 		}
-		shown = append(shown, line)
+		shown = append(shown, fmt.Sprintf("%s to %s: %s", programme.Start.In(paris).Format("Mon 15:04"), programme.Stop.In(paris).Format("Mon 15:04"), programme.Title))
 
 		switch programme.Title {
 		case "Sœurs":
@@ -289,27 +288,15 @@ func TestProgrammes(t *testing.T) {
 	listed := []string{
 		"Tue 21:10 to Tue 22:45: Après la colère", // on since before, and until the next starts
 		"Tue 22:45 to Tue 23:50: Justice en France",
-		"Tue 23:50 to Wed 00:00: France 2 (unlisted)",
-		"Wed 00:00 to Wed 01:00: France 2 (unlisted)",
-	}
-	morning := []string{
-		"Wed 05:00 to Wed 06:00: France 2 (unlisted)",
 		"Wed 06:00 to Wed 06:35: Dans le retro",
 		"Wed 06:35 to Wed 06:50: Okoo-koo", // cut short by the next
 		"Wed 06:50 to Wed 06:55: Journal Météo Climat",
-		"Wed 06:55 to Wed 07:00: France 2 (unlisted)",
-	}
-	evening := []string{
-		"Wed 20:00 to Wed 21:00: France 2 (unlisted)",
-		"Wed 21:00 to Wed 21:10: France 2 (unlisted)",
 		"Wed 21:10 to Wed 21:58: Sœurs",
 		"Wed 21:58 to Wed 22:50: Sœurs",
 		"Wed 22:50 to Thu 00:22: Un père idéal",
-		"Thu 00:22 to Thu 01:00: France 2 (unlisted)",
 	}
-	if len(shown) != 53 || !slices.Equal(shown[:4], listed) || !slices.Equal(shown[8:13], morning) || !slices.Equal(shown[26:32], evening) ||
-		shown[52] != "Thu 21:00 to Thu 22:00: France 2 (unlisted)" {
-		t.Errorf("France 2's guide:\n%s", strings.Join(shown, "\n"))
+	if len(programmes) != 53 || !slices.Equal(shown, listed) {
+		t.Errorf("France 2's guide of %d programmes, %d of them its name:\n%s", len(programmes), len(programmes)-len(shown), strings.Join(shown, "\n"))
 	}
 
 	// A programme is looked up once, found or not.
@@ -373,7 +360,6 @@ func TestStream(t *testing.T) {
 		t.Fatalf("Stream() = %+v, %v: want the master playlist at %s", source, err, want)
 	}
 	// As ffmpeg fetches: a range of everything.
-	var from string // where the latest answer says it is from
 	fetch := func(file string) (int, string) {
 		t.Helper()
 		req, _ := http.NewRequest(http.MethodGet, f.url+"/pass1/live/france-2/"+file, nil)
@@ -384,12 +370,11 @@ func TestStream(t *testing.T) {
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
-		from = resp.Request.URL.Path
 		return resp.StatusCode, string(body)
 	}
 
-	// Every quality, for the remuxer to choose from, without asking again.
-	if status, playlist := fetch("index.m3u8?hdnea=short"); status != http.StatusOK || playlist != master || f.fetched["index.m3u8"] != 1 {
+	// Every quality, for the remuxer to choose from.
+	if status, playlist := fetch("index.m3u8?hdnea=short"); status != http.StatusOK || playlist != master || f.fetched["index.m3u8"] != 2 {
 		t.Errorf("the master playlist: %d after %d fetches\n%s\nwant\n%s", status, f.fetched["index.m3u8"], playlist, master)
 	}
 	// The key by its path, for ffmpeg to ask the relay for it.
@@ -397,22 +382,15 @@ func TestStream(t *testing.T) {
 	if status, playlist := fetch("high.m3u8"); status != http.StatusOK || playlist != want || f.ranged["high.m3u8"] {
 		t.Errorf("the playlist of the quality: %d, asked for by range: %t\n%s\nwant it whole:\n%s", status, f.ranged["high.m3u8"], playlist, want)
 	}
-	if status, picture := fetch("high-48337899.ts"); status != http.StatusOK || picture != "picture" || !f.ranged["high-48337899.ts"] {
-		t.Errorf("a segment: %d %q, asked for by range: %t, want it as ffmpeg asked", status, picture, f.ranged["high-48337899.ts"])
-	}
-
 	// The pass runs out: the stream goes on with a new one.
 	f.revoked["pass1"] = true
-	if status, _ := fetch("high.m3u8"); status != http.StatusOK || f.passes != 2 {
-		t.Errorf("after the pass ran out: %d with %d passes handed out, want 200 with a second", status, f.passes)
+	if status, picture := fetch("high-48337899.ts"); status != http.StatusOK || picture != "picture" || f.passes != 2 || !f.ranged["high-48337899.ts"] {
+		t.Errorf("a segment after the pass ran out: %d %q with %d passes handed out, asked for by range: %t, want it with a second pass, by range",
+			status, picture, f.passes, f.ranged["high-48337899.ts"])
 	}
-	// What the playlist lists is found from where the playlist is, and so
-	// asked for with the first pass too: no other is renewed.
-	if want := "/pass1/live/france-2/high.m3u8"; from != want {
-		t.Errorf("after the pass ran out, the playlist is from %s, want it from where it was asked for, %s", from, want)
-	}
-	if status, _ := fetch("high-48337899.ts"); status != http.StatusOK || f.passes != 2 {
-		t.Errorf("the request after: %d with %d passes handed out, want 200 with the second", status, f.passes)
+	f.revoked["pass2"] = true
+	if status, _ := fetch("high.m3u8"); status != http.StatusOK || f.passes != 3 {
+		t.Errorf("a playlist after the second pass ran out: %d with %d passes handed out, want 200 with a third", status, f.passes)
 	}
 	// A new pass that is refused is refused for something else.
 	p.rest = time.Hour
@@ -420,98 +398,18 @@ func TestStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.revoked["pass3"] = true
-	req, _ := http.NewRequest(http.MethodGet, f.url+"/pass3/live/france-2/high.m3u8", nil)
-	if resp, err := again.Client.Do(req); err != nil || resp.StatusCode != http.StatusForbidden || f.passes != 3 {
-		t.Errorf("a new pass refused: %v, %v with %d passes handed out, want 403 and no pass more", resp, err, f.passes)
+	f.revoked["pass4"] = true
+	resp, _ := providertest.Get(t, again.Client, f.url+"/pass4/live/france-2/high.m3u8")
+	if resp.StatusCode != http.StatusForbidden || f.passes != 4 {
+		t.Errorf("a new pass refused: %s with %d passes handed out, want 403 and no pass more", resp.Status, f.passes)
 	}
 	if f.directed != 1 {
 		t.Errorf("asked for the list of live channels %d times, want once for both tunes", f.directed)
 	}
 }
 
-// Token renewal keeps the segment transport, while its API request and later
-// playlists use the ordinary transport with the same context.
-func TestCancellableSession(t *testing.T) {
-	var mu sync.Mutex
-	seen := map[string][]int{}
-	origin := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		mu.Lock()
-		seen[req.URL.Path] = append(seen[req.URL.Path], req.ProtoMajor)
-		mu.Unlock()
-		switch req.URL.Path {
-		case "/old/segment.ts":
-			w.WriteHeader(http.StatusForbidden)
-		case "/new/segment.ts":
-			if req.Header.Get("Range") != "bytes=2-5" {
-				t.Error("the renewed segment lost its byte range")
-			}
-			io.WriteString(w, "part")
-		case "/new/media.m3u8":
-			io.WriteString(w, "#EXTM3U\nsegment.ts\n")
-		case "/sign":
-			io.WriteString(w, "/new")
-		default:
-			http.NotFound(w, req)
-		}
-	}))
-	origin.EnableHTTP2 = true
-	origin.StartTLS()
-	defer origin.Close()
-	base := &http.Client{Transport: httpclient.NewTransport(origin.Client().Transport.(*http.Transport))}
-	defer base.CloseIdleConnections()
-	s := &session{RoundTripper: base.Transport, first: "/old", pass: "/old"}
-	s.renewed = func(ctx context.Context) string {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, origin.URL+"/sign", nil)
-		resp, err := base.Do(req)
-		if err != nil {
-			t.Error(err)
-			return ""
-		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Error(err)
-			return ""
-		}
-		return string(body)
-	}
-	client := &http.Client{Transport: s}
-	segments := *client
-	segmentTransport, release := httpclient.SegmentTransport(client.Transport)
-	defer release()
-	segments.Transport = segmentTransport
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, origin.URL+"/old/segment.ts", nil)
-	req.Header.Set("Range", "bytes=2-5")
-	resp, err := segments.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil || string(body) != "part" {
-		t.Fatalf("renewed segment: %q, %v", body, err)
-	}
-	resp, err = client.Get(origin.URL + "/old/media.m3u8")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	for path, want := range map[string]int{"/old/segment.ts": 1, "/new/segment.ts": 1, "/sign": 2, "/new/media.m3u8": 2} {
-		if !slices.Equal(seen[path], []int{want}) {
-			t.Errorf("%s used %v, want HTTP/%d once", path, seen[path], want)
-		}
-	}
-}
-
-// A stream that is handed out as the playlist of its one quality has no
-// master to keep: ffmpeg reads the playlist anew as the stream goes on.
+// A stream of one quality is its playlist as it stands: ffmpeg reads it anew
+// as the stream goes on.
 func TestStreamOfOneQuality(t *testing.T) {
 	f, p := serve(t)
 	f.index = head + segment
@@ -524,12 +422,7 @@ func TestStreamOfOneQuality(t *testing.T) {
 	f.index = later
 	f.mu.Unlock()
 
-	resp, err := source.Client.Get(source.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if playlist, _ := io.ReadAll(resp.Body); string(playlist) != later {
+	if _, playlist := providertest.Get(t, source.Client, source.URL); playlist != later {
 		t.Errorf("the playlist, read again:\n%s\nwant the one with the next segment:\n%s", playlist, later)
 	}
 }
@@ -574,5 +467,3 @@ func TestStreamRefused(t *testing.T) {
 		t.Errorf("Stream() of a channel that is not offered = %+v, want an error", source)
 	}
 }
-
-var _ provider.Provider = (*Provider)(nil)

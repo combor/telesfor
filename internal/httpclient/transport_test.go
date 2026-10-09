@@ -32,10 +32,8 @@ func TestCancellableConnection(t *testing.T) {
 	transport := NewTransport(origin.Client().Transport.(*http.Transport))
 	client := &http.Client{Transport: transport}
 	defer client.CloseIdleConnections()
-	segments := *client
-	segmentTransport, release := SegmentTransport(client.Transport)
+	segments, release := SegmentClient(client)
 	defer release()
-	segments.Transport = segmentTransport
 	request := func(client *http.Client, ctx context.Context, path string, wantProtocol int) (*http.Response, net.Conn) {
 		t.Helper()
 		var conn net.Conn
@@ -63,17 +61,17 @@ func TestCancellableConnection(t *testing.T) {
 	}
 	resp, ordinary := request(client, t.Context(), "/playlist", 2)
 	finish(resp)
-	resp, first := request(&segments, t.Context(), "/segment", 1)
+	resp, first := request(segments, t.Context(), "/segment", 1)
 	finish(resp)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	resp, abandoned := request(&segments, ctx, "/blocked", 1)
+	resp, abandoned := request(segments, ctx, "/blocked", 1)
 	if abandoned != first {
 		t.Error("completed HTTP/1.1 fetch did not leave a reusable connection")
 	}
 	cancel()
 	resp.Body.Close()
-	resp, next := request(&segments, t.Context(), "/segment", 1)
+	resp, next := request(segments, t.Context(), "/segment", 1)
 	finish(resp)
 	if next == abandoned {
 		t.Error("canceled HTTP/1.1 connection was reused")
@@ -125,7 +123,7 @@ func TestSegmentPoolReuse(t *testing.T) {
 	origin.EnableHTTP2 = true
 	origin.StartTLS()
 	defer origin.Close()
-	transport, closeSegments := SegmentTransport(NewTransport(origin.Client().Transport.(*http.Transport)))
+	transport, closeSegments := segmentTransport(NewTransport(origin.Client().Transport.(*http.Transport)))
 	defer closeSegments()
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 	defer client.CloseIdleConnections()
@@ -179,6 +177,35 @@ func TestSegmentPoolReuse(t *testing.T) {
 	}
 }
 
+func TestWrap(t *testing.T) {
+	origin := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Header.Get("X-Test-Auth") != "present" {
+			t.Errorf("a request over %s did not go through the wrapper", req.Proto)
+		}
+		io.WriteString(w, "ok")
+	}))
+	origin.EnableHTTP2 = true
+	origin.StartTLS()
+	defer origin.Close()
+	shared := NewTransport(origin.Client().Transport.(*http.Transport))
+	defer shared.(*transport).CloseIdleConnections()
+	client := &http.Client{Transport: Wrap(shared, func(req *http.Request, next http.RoundTripper) (*http.Response, error) {
+		return authenticatedTransport{next}.RoundTrip(req)
+	})}
+	segments, release := SegmentClient(client)
+	defer release()
+	for client, want := range map[*http.Client]int{client: 2, segments: 1} {
+		resp, err := client.Get(origin.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.ProtoMajor != want {
+			t.Errorf("used %s, want HTTP/%d", resp.Proto, want)
+		}
+	}
+}
+
 type authenticatedTransport struct{ base http.RoundTripper }
 
 func (t authenticatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -215,7 +242,7 @@ func TestSegmentTransportOwnership(t *testing.T) {
 			case "custom":
 				source = authenticatedTransport{base}
 			}
-			selected, release := SegmentTransport(source)
+			selected, release := segmentTransport(source)
 			client := &http.Client{Transport: selected, Timeout: 3 * time.Second}
 			defer client.CloseIdleConnections()
 			get := func() bool {
@@ -270,7 +297,7 @@ func TestReleaseClosesConnectionAfterActiveResponse(t *testing.T) {
 	defer origin.Close()
 	base := origin.Client().Transport.(*http.Transport)
 	base.IdleConnTimeout = 0
-	selected, release := SegmentTransport(base)
+	selected, release := segmentTransport(base)
 	client := &http.Client{Transport: selected, Timeout: 3 * time.Second}
 	defer client.CloseIdleConnections()
 	resp, err := client.Get(origin.URL)

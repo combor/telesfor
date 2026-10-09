@@ -1,6 +1,9 @@
 package remux
 
-import "io"
+import (
+	"cmp"
+	"io"
+)
 
 const (
 	// maxJoin is how much of a stream may pass before its first frame shows.
@@ -9,10 +12,10 @@ const (
 
 	// anyFrame is how long a frame is taken to last when the stream before had
 	// no two frames to tell by: a twenty-fifth of a second.
-	anyFrame = 3600
+	anyFrame = clockRate / 25
 
 	// longFrame is longer than any frame lasts: a second.
-	longFrame = 90000
+	longFrame = clockRate
 )
 
 // splicer makes one MPEG-TS stream of what one ffmpeg after another writes.
@@ -84,8 +87,8 @@ func (s *splicer) read(packet []byte) {
 		s.out = append(s.out, packet...)
 		return
 	}
-	pid := int(packet[1]&0x1f)<<8 | int(packet[2])
-	if begins := packet[1]&0x40 != 0; begins && pid == 0 {
+	pid := pidOf(packet)
+	if begins := unitStart(packet); begins && pid == 0 {
 		s.pmtPID = programMapPID(section(packet))
 	} else if begins && pid == s.pmtPID {
 		s.clockPID, _ = programMap(section(packet))
@@ -100,26 +103,22 @@ func (s *splicer) read(packet []byte) {
 	// a keyframe.
 	s.held = append(s.held, packet...)
 	if pts, _ := stamps(packet); pid == s.clockPID && pts != nil {
-		frame := s.frame
-		if frame == 0 {
-			frame = anyFrame
-		}
-		s.shift = s.shown + frame - timestamp(pts)
+		s.shift = s.shown + cmp.Or(s.frame, anyFrame) - timestamp(pts)
 	} else if len(s.held) < maxJoin {
 		return
 	} else if s.clock >= 0 {
 		// A stream without frames where they should be: its clock goes on
 		// from where the other stopped.
-		for held := s.held; len(held) >= packetSize; held = held[packetSize:] {
-			if first, ok := clockReference(held[:packetSize]); ok {
+		for held := range packetsIn(s.held) {
+			if first, ok := clockReference(held); ok {
 				s.shift = s.clock - first
 				break
 			}
 		}
 	}
 	s.joining = false
-	for held := s.held; len(held) >= packetSize; held = held[packetSize:] {
-		s.out = append(s.out, s.join(held[:packetSize])...)
+	for held := range packetsIn(s.held) {
+		s.out = append(s.out, s.join(held)...)
 	}
 	s.held = nil
 }
@@ -127,61 +126,31 @@ func (s *splicer) read(packet []byte) {
 // join makes a packet of the stream at hand one of the stream that goes out,
 // and returns it.
 func (s *splicer) join(packet []byte) []byte {
-	const wrap = 1<<timestampBits - 1
-	pid := int(packet[1]&0x1f)<<8 | int(packet[2])
-
-	clock, ticks := clockReference(packet)
-	pts, dts := stamps(packet)
-	if pid == 0 || pid == s.pmtPID {
-		pts, dts = nil, nil // tables have no frames in them
-	}
-	if ticks && (s.shift != 0 || s.floor >= 0) {
-		clock = (clock + s.shift) & wrap
-		// A stream whose sound begins before its picture starts its clock
-		// that much earlier. The clock of the stream that goes out does not
-		// step back: it waits.
-		if back := (s.floor - clock) & wrap; s.floor >= 0 && back < longFrame {
-			clock = s.floor
-		} else {
-			s.floor = -1
+	pid := pidOf(packet)
+	if clock, ok := clockReference(packet); ok {
+		if s.shift != 0 || s.floor >= 0 {
+			clock = (clock + s.shift) & wrap
+			// A stream whose sound begins before its picture starts its clock
+			// that much earlier. The clock of the stream that goes out does
+			// not step back: it waits.
+			if back := (s.floor - clock) & wrap; s.floor >= 0 && back < longFrame {
+				clock = s.floor
+			} else {
+				s.floor = -1
+			}
+			setClockReference(packet, clock)
 		}
-		setClockReference(packet, clock)
-	}
-	if s.shift != 0 {
-		if pts != nil {
-			setTimestamp(pts, (timestamp(pts)+s.shift)&wrap)
-		}
-		if dts != nil {
-			setTimestamp(dts, (timestamp(dts)+s.shift)&wrap)
-		}
-	}
-	if ticks {
 		s.clock = clock
 	}
-	if pid == s.clockPID && pts != nil {
-		shown := timestamp(pts)
-		decoded := shown
-		if dts != nil {
-			decoded = timestamp(dts)
-			// Not before the frame before it, which a stream that decodes
-			// further ahead than the one before would have.
-			if back := (s.decoded - decoded) & wrap; s.decoded >= 0 && back < longFrame {
-				decoded = (s.decoded + 1) & wrap
-				setTimestamp(dts, decoded)
+	if pts, dts := stamps(packet); pts != nil && pid != 0 && pid != s.pmtPID { // tables have no frames in them
+		if s.shift != 0 {
+			setTimestamp(pts, (timestamp(pts)+s.shift)&wrap)
+			if dts != nil {
+				setTimestamp(dts, (timestamp(dts)+s.shift)&wrap)
 			}
 		}
-		// The clock wraps around, and a step that makes no sense tells
-		// nothing. Nor does one that is not like the one before: frames
-		// that were moved are a tick apart.
-		if step := (decoded - s.decoded) & wrap; s.decoded >= 0 && step > 0 && step < longFrame {
-			if step == s.step || s.frame == 0 {
-				s.frame = step
-			}
-			s.step = step
-		}
-		s.decoded = decoded
-		if s.shown < 0 || (shown-s.shown)&wrap < 1<<(timestampBits-1) {
-			s.shown = shown
+		if pid == s.clockPID {
+			s.follow(pts, dts)
 		}
 	}
 
@@ -197,4 +166,33 @@ func (s *splicer) join(packet []byte) []byte {
 	packet[3] = packet[3]&0xf0 | counter
 	s.counters[pid] = counter
 	return packet
+}
+
+// follow notes when a frame of the clock's stream is decoded and shown, and
+// how long frames last.
+func (s *splicer) follow(pts, dts []byte) {
+	shown := timestamp(pts)
+	decoded := shown
+	if dts != nil {
+		decoded = timestamp(dts)
+		// Not before the frame before it, which a stream that decodes
+		// further ahead than the one before would have.
+		if back := (s.decoded - decoded) & wrap; s.decoded >= 0 && back < longFrame {
+			decoded = (s.decoded + 1) & wrap
+			setTimestamp(dts, decoded)
+		}
+	}
+	// The clock wraps around, and a step that makes no sense tells nothing.
+	// Nor does one that is not like the one before: frames that were moved
+	// are a tick apart.
+	if step := (decoded - s.decoded) & wrap; s.decoded >= 0 && step > 0 && step < longFrame {
+		if step == s.step || s.frame == 0 {
+			s.frame = step
+		}
+		s.step = step
+	}
+	s.decoded = decoded
+	if s.shown < 0 || (shown-s.shown)&wrap < 1<<(timestampBits-1) {
+		s.shown = shown
+	}
 }

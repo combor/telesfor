@@ -6,13 +6,9 @@ import (
 	"log/slog"
 )
 
-const (
-	packetSize = 188 // bytes in an MPEG-TS packet
-
-	// maxLeadIn is how much of a stream may pass before all of its streams have
-	// started. After that it is passed on as it is.
-	maxLeadIn = 12 << 20
-)
+// maxLeadIn is how much of a stream may pass before all of its streams have
+// started. After that it is passed on as it is.
+const maxLeadIn = 12 << 20
 
 // aligner passes MPEG-TS on from a point where Plex can start reading, and
 // drops what comes before.
@@ -76,8 +72,8 @@ func (a *aligner) read(packet []byte) (start bool) {
 	}
 	a.seen += packetSize
 
-	pid := int(packet[1]&0x1f)<<8 | int(packet[2])
-	begins := packet[1]&0x40 != 0 // a table or a frame begins in this packet
+	pid := pidOf(packet)
+	begins := unitStart(packet) // a table or a frame begins in this packet
 	switch {
 	case pid == 0 && begins:
 		a.pat = bytes.Clone(packet)
@@ -124,65 +120,4 @@ func (a *aligner) read(packet []byte) (start bool) {
 		a.inFlight[pid] = append(sent, packet...)
 	}
 	return false
-}
-
-// randomAccess reports whether a packet is marked as a point to start decoding
-// from, which is how ffmpeg marks keyframes.
-func randomAccess(packet []byte) bool {
-	hasAdaptationField := packet[3]&0x20 != 0
-	return hasAdaptationField && packet[4] > 0 && packet[5]&0x40 != 0
-}
-
-// section returns the table section that begins in a packet, or nil if there
-// is none.
-func section(packet []byte) []byte {
-	payload := 4
-	if packet[3]&0x20 != 0 { // an adaptation field comes first
-		payload += 1 + int(packet[4])
-	}
-	if packet[3]&0x10 == 0 || payload >= packetSize {
-		return nil
-	}
-	pointer := payload + 1 + int(packet[payload]) // the section begins after a pointer to it
-	if pointer >= packetSize {
-		return nil
-	}
-	return packet[pointer:]
-}
-
-// sectionEnd returns where the entries of a table section end: before the
-// checksum that closes it.
-func sectionEnd(s []byte) int {
-	length := int(s[1]&0x0f)<<8 | int(s[2]) // counted from the byte after the length
-	return min(3+length-4, len(s))
-}
-
-// programMapPID reads a program association table and returns the PID of the
-// program map table, or -1.
-func programMapPID(s []byte) int {
-	if len(s) < 8 {
-		return -1
-	}
-	for i := 8; i+4 <= sectionEnd(s); i += 4 {
-		if program := int(s[i])<<8 | int(s[i+1]); program != 0 { // 0 is the network table
-			return int(s[i+2]&0x1f)<<8 | int(s[i+3])
-		}
-	}
-	return -1
-}
-
-// programMap reads a program map table and returns the PID of the stream that
-// carries the clock, and the PIDs of all streams.
-func programMap(s []byte) (clock int, streams []int) {
-	if len(s) < 12 {
-		return -1, nil
-	}
-	clock = int(s[8]&0x1f)<<8 | int(s[9])
-	programInfo := int(s[10]&0x0f)<<8 | int(s[11])
-	for i := 12 + programInfo; i+5 <= sectionEnd(s); {
-		streams = append(streams, int(s[i+1]&0x1f)<<8|int(s[i+2]))
-		streamInfo := int(s[i+3]&0x0f)<<8 | int(s[i+4])
-		i += 5 + streamInfo
-	}
-	return clock, streams
 }

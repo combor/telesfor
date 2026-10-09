@@ -57,7 +57,7 @@ func (r *reserve) Write(p []byte) (int, error) {
 			r.first = clock
 		default:
 			// A clock that runs backwards has started anew, and tells no more.
-			enough = clock < r.first || clock-r.first >= int64(minLead/time.Second)*90000
+			enough = clock < r.first || clock-r.first >= int64(minLead/time.Second)*clockRate
 		}
 	}
 	if !enough {
@@ -78,19 +78,4 @@ func (r *reserve) flush() error {
 	_, err := r.w.Write(r.held)
 	r.held = nil
 	return err
-}
-
-// clockReference reads the time on the clock a packet carries, if it carries
-// one, in the 90 kHz ticks that MPEG-TS timestamps count.
-func clockReference(packet []byte) (int64, bool) {
-	if packet[3]&0x20 == 0 || packet[4] < 7 || packet[5]&0x10 == 0 {
-		return 0, false
-	}
-	return int64(packet[6])<<25 | int64(packet[7])<<17 | int64(packet[8])<<9 | int64(packet[9])<<1 | int64(packet[10])>>7, true
-}
-
-// setClockReference writes a time over the one on the clock a packet carries.
-func setClockReference(packet []byte, t int64) {
-	packet[6], packet[7], packet[8], packet[9] = byte(t>>25), byte(t>>17), byte(t>>9), byte(t>>1)
-	packet[10] = packet[10]&0x7f | byte(t)<<7
 }

@@ -65,16 +65,17 @@ jobs:
           cache: false
       # GoReleaser's Go build cache, under a key of its own: setup-go's key
       # is shared with the test job, whose cache no cross-compilation can use.
-      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - &restore-goreleaser-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
-          key: go-build-goreleaser-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          key: &goreleaser-cache-key go-build-goreleaser-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
           restore-keys: |
             go-build-goreleaser-${{ hashFiles('go.mod', 'go.sum') }}-
       - name: Build the packages
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
-          version: v2.18.2
+          version: &goreleaser-version v2.18.2
           args: release --snapshot --clean --skip=nix
       # The service fetches its channels from TVP as it starts. The pass is
       # asserted: a leg whose name drifted from the Go test's distros table
@@ -92,7 +93,7 @@ jobs:
         if: matrix.distro == 'debian'
         with:
           path: ~/.cache/go-build
-          key: go-build-goreleaser-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          key: *goreleaser-cache-key
 
   container-smoke:
     name: Container Smoke Test
@@ -125,7 +126,7 @@ jobs:
 
   release:
     name: Release
-    needs:
+    needs: &release-checks
       - govulncheck
       - test
       - package-smoke
@@ -145,12 +146,7 @@ jobs:
           go-version-file: 'go.mod'
           cache: false
       # Filled by the smoke test's identical build: see its cache steps.
-      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/go-build
-          key: go-build-goreleaser-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            go-build-goreleaser-${{ hashFiles('go.mod', 'go.sum') }}-
+      - *restore-goreleaser-cache
       - name: Prepare RPM signing key
         env:
           RPM_GPG_PRIVATE_KEY: ${{ secrets.RPM_GPG_PRIVATE_KEY }}
@@ -166,7 +162,7 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
-          version: v2.18.2
+          version: *goreleaser-version
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -181,11 +177,7 @@ jobs:
     name: Publish Container Image
     # Gated on the checks, not on the release: the image publishes beside
     # it, and stays published if the release fails.
-    needs:
-      - govulncheck
-      - test
-      - package-smoke
-      - container-smoke
+    needs: *release-checks
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -213,6 +205,13 @@ jobs:
             type=semver,pattern={{version}}
             type=sha,format=long
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+          # The repository supplies the other labels, but no description.
+          labels: &description |
+            org.opencontainers.image.description=A virtual TV tuner for Plex: live TV from streaming providers as an HDHomeRun network tuner.
+          annotations: *description
+        env:
+          # GHCR reads a multi-platform image's description from its index.
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -221,25 +220,21 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           build-args: VERSION=${{ steps.meta.outputs.version }}
           provenance: mode=max
           sbom: true
+          # No cache-to: the smoke test has already written this tag's cache.
           cache-from: type=gha
-          cache-to: type=gha,mode=max
       - name: Verify the published image is public
         env:
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ghcr.io/combor/telesfor@${{ steps.build.outputs.digest }}
         run: |
-          repo=combor/telesfor
-          manifest=$RUNNER_TEMP/ghcr-manifest.json
-          if ! curl -fsSL "https://ghcr.io/token?service=ghcr.io&scope=repository:$repo:pull" -o "$RUNNER_TEMP/ghcr-token.json"; then
+          docker logout ghcr.io
+          if ! index=$(docker buildx imagetools inspect --raw "$IMAGE"); then
             echo "anonymous pull denied: set the GHCR package to public in its settings, then re-run this job"
             exit 1
           fi
-          token=$(jq -r .token "$RUNNER_TEMP/ghcr-token.json")
-          curl -fsSL -H "Authorization: Bearer $token" \
-            -H "Accept: application/vnd.oci.image.index.v1+json" \
-            "https://ghcr.io/v2/$repo/manifests/$IMAGE_DIGEST" >"$manifest"
-          published=$(jq -r '[.manifests[] | select(.platform.os == "linux") | "\(.platform.os)/\(.platform.architecture)"] | sort | join(" ")' "$manifest")
+          published=$(jq -r '[.manifests[] | select(.platform.os == "linux") | "\(.platform.os)/\(.platform.architecture)"] | sort | join(" ")' <<<"$index")
           echo "published: $published"
           [ "$published" = "linux/amd64 linux/arm64" ] || exit 1

@@ -15,6 +15,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/providertest"
 	"github.com/combor/telesfor/internal/store"
 )
 
@@ -132,19 +133,6 @@ func signedIn(t *testing.T) (*globo, *Provider) {
 	return g, p
 }
 
-// await waits for the provider's sign-in to reach a state.
-func await(t *testing.T, p *Provider, want provider.LoginState) provider.Login {
-	t.Helper()
-	for range 2000 {
-		if login := p.Login(); login.State == want {
-			return login
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("sign-in stands at %+v, want state %d", p.Login(), want)
-	return provider.Login{}
-}
-
 func TestSignIn(t *testing.T) {
 	db, err := store.Open(t.TempDir())
 	if err != nil {
@@ -205,7 +193,7 @@ func TestSignInFails(t *testing.T) {
 			t.Fatal(err)
 		}
 		// The account that was there stays.
-		if login := await(t, p, provider.SignedIn); login.Problem != want {
+		if login := providertest.Await(t, p, provider.SignedIn); login.Problem != want {
 			t.Errorf("code answered with %d: %+v, want the problem %q", status, login, want)
 		}
 	}
@@ -216,14 +204,7 @@ func TestSignInFails(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	p.Login() // Pending, for a moment
-	for range 2000 {
-		if p.Login().Problem != "" {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	if login := p.Login(); login != (provider.Login{Problem: codeExpired}) {
+	if login := providertest.Await(t, p, provider.SignedOut); login != (provider.Login{Problem: codeExpired}) {
 		t.Errorf("code that ran out: %+v", login)
 	}
 }
@@ -233,7 +214,7 @@ func TestSignOutGivesUpTheCode(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	await(t, p, provider.Pending)
+	providertest.Await(t, p, provider.Pending)
 	if err := p.SignOut(); err != nil {
 		t.Fatal(err)
 	}
@@ -379,18 +360,46 @@ func TestStream(t *testing.T) {
 		strings.Contains(*g.asked.Load(), "dvr") {
 		t.Errorf("playback request lacks %q, or asks for the long playlist: %s", missing, *g.asked.Load())
 	}
+}
 
-	for refusal, want := range map[string]string{
-		"403 geo-block":           "blocked outside Brazil",
-		"404 geo-fencing":         "blocked outside Brazil",
-		"403 user-not-authorized": "no access to this channel",
-		"401 login-required":      "sign in again",
-		"404 video-not-found":     "Not Found video-not-found",
-	} {
-		g.refusal = refusal
-		if _, err := p.Stream(t.Context(), "futura"); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("Stream() refused with %q = %v, want an error with %q", refusal, err, want)
-		}
+func TestStreamRefused(t *testing.T) {
+	tests := []struct {
+		name string
+		set  func(*globo)
+		want string
+	}{
+		{"abroad", func(g *globo) { g.refusal = "403 geo-block" }, "blocked outside Brazil"},
+		{"fenced in", func(g *globo) { g.refusal = "404 geo-fencing" }, "blocked outside Brazil"},
+		{"no access", func(g *globo) { g.refusal = "403 user-not-authorized" }, "no access to this channel"},
+		{"gone", func(g *globo) { g.refusal = "404 video-not-found" }, "Not Found video-not-found"},
+		{"encrypted", func(g *globo) { g.drm = true }, "DRM"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g, p := signedIn(t)
+			test.set(g)
+
+			_, err := p.Stream(t.Context(), "futura")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Errorf("Stream() error = %v, want one mentioning %q", err, test.want)
+			}
+			if login := p.Login(); login != (provider.Login{State: provider.SignedIn}) {
+				t.Errorf("sign-in after a refusal that says nothing of it: %+v", login)
+			}
+		})
+	}
+
+	_, p := serve(t, nil)
+	if _, err := p.Stream(t.Context(), "futura"); err == nil || !strings.Contains(err.Error(), "sign in") {
+		t.Errorf("Stream() without an account = %v, want a call to sign in", err)
+	}
+}
+
+func TestStreamExpiresTheSignIn(t *testing.T) {
+	g, p := signedIn(t)
+	g.refusal = "401 login-required"
+	if _, err := p.Stream(t.Context(), "futura"); err == nil || !strings.Contains(err.Error(), "sign in again") {
+		t.Errorf("Stream() refused with a call to log in = %v, want one to sign in again", err)
 	}
 	if login := p.Login(); login.State != provider.Expired {
 		t.Errorf("sign-in after Globo asked for a login: %+v, want it expired", login)
@@ -400,16 +409,6 @@ func TestStream(t *testing.T) {
 	p.account, p.expired = &account{GLBID: "session", Channels: old.Channels}, false
 	if p.expire(old); p.Login().State != provider.SignedIn {
 		t.Errorf("sign-in after a refusal of the account before it: %+v", p.Login())
-	}
-
-	g.refusal, g.drm = "", true
-	if _, err := p.Stream(t.Context(), "futura"); err == nil || !strings.Contains(err.Error(), "DRM") {
-		t.Errorf("Stream() of an encrypted channel = %v, want a DRM error", err)
-	}
-
-	_, signedOut := serve(t, nil)
-	if _, err := signedOut.Stream(t.Context(), "futura"); err == nil || !strings.Contains(err.Error(), "sign in") {
-		t.Errorf("Stream() without an account = %v, want a call to sign in", err)
 	}
 }
 

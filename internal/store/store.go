@@ -4,6 +4,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -62,6 +63,71 @@ func checkVersion(tx *bolt.Tx) error {
 	}
 	if n > Version {
 		return fmt.Errorf("format version %d is from a newer telesfor, which this one (%d) can't read", n, Version)
+	}
+	return nil
+}
+
+// Get decodes the JSON under key in owner's bucket into v. It reports whether
+// there was any.
+func Get(db *bolt.DB, owner, key string, v any) (bool, error) {
+	if db == nil {
+		return false, nil
+	}
+	var found bool
+	err := db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(owner))
+		if b == nil {
+			return nil
+		}
+		data := b.Get([]byte(key))
+		if data == nil {
+			return nil
+		}
+		found = true
+		return json.Unmarshal(data, v) // data is valid only within the transaction
+	})
+	if err != nil {
+		return false, fmt.Errorf("reading %s from %s: %w", key, db.Path(), err)
+	}
+	return found, nil
+}
+
+// Put stores v as JSON under key in owner's bucket.
+func Put(db *bolt.DB, owner, key string, v any) error {
+	if db == nil {
+		return nil
+	}
+	err := db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists([]byte(owner))
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(key), data)
+	})
+	if err != nil {
+		return fmt.Errorf("writing %s to %s: %w", key, db.Path(), err)
+	}
+	return nil
+}
+
+// Delete removes key from owner's bucket.
+func Delete(db *bolt.DB, owner, key string) error {
+	if db == nil {
+		return nil
+	}
+	err := db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(owner))
+		if b == nil {
+			return nil
+		}
+		return b.Delete([]byte(key))
+	})
+	if err != nil {
+		return fmt.Errorf("removing %s from %s: %w", key, db.Path(), err)
 	}
 	return nil
 }

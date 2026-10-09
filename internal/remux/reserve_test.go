@@ -22,14 +22,7 @@ func (w *writes) Write(p []byte) (int, error) {
 // TestReserve holds a stream that ffmpeg wrote back until enough of it has
 // come.
 func TestReserve(t *testing.T) {
-	ffmpeg, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		t.Skip("ffmpeg is not installed")
-	}
-	ffprobe, err := exec.LookPath("ffprobe")
-	if err != nil {
-		t.Skip("ffprobe is not installed")
-	}
+	ffmpeg, ffprobe := installed(t, "ffmpeg"), installed(t, "ffprobe")
 	stream, err := exec.Command(ffmpeg, "-hide_banner", "-loglevel", "error",
 		"-f", "lavfi", "-i", "testsrc=duration=12:size=160x120:rate=25",
 		"-f", "lavfi", "-i", "sine=duration=12",

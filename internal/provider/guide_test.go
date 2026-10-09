@@ -16,8 +16,10 @@ func shown(programmes []Programme) []string {
 	var lines []string
 	for _, programme := range programmes {
 		line := fmt.Sprintf("%s %s to %s: %s", programme.ChannelID, programme.Start.Format("Mon 15:04"), programme.Stop.Format("Mon 15:04"), programme.Title)
-		if programme.Description != "" {
-			line += " | " + programme.Description
+		for _, more := range []string{programme.Description, programme.Image} {
+			if more != "" {
+				line += " | " + more
+			}
 		}
 		lines = append(lines, line)
 	}
@@ -94,7 +96,7 @@ func TestUntilNext(t *testing.T) {
 	}{
 		{"two days", clock(9, 0), clock(24+15, 0), []string{
 			"one Mon 08:00 to Mon 10:00: Morning",
-			"one Mon 12:00 to Mon 13:00: Lunch | Soup",
+			"one Mon 12:00 to Mon 13:00: Lunch | Soup | lunch.jpg",
 			"one Tue 13:00 to Tue 14:00: Tuesday",
 		}},
 		{"a morning", clock(9, 0), clock(12, 0), []string{
@@ -103,14 +105,8 @@ func TestUntilNext(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			programmes := UntilNext("one", listed, test.from, test.to)
-			if got := shown(programmes); !slices.Equal(got, test.want) {
+			if got := shown(UntilNext("one", listed, test.from, test.to)); !slices.Equal(got, test.want) {
 				t.Errorf("UntilNext():\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(test.want, "\n"))
-			}
-			for _, programme := range programmes {
-				if programme.Title == "Lunch" && programme.Image != "lunch.jpg" {
-					t.Errorf("Lunch has the picture %q, want the guide's", programme.Image)
-				}
 			}
 		})
 	}

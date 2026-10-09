@@ -25,12 +25,13 @@ var files embed.FS
 
 var (
 	layout       = template.Must(template.ParseFS(files, "templates/layout.html"))
-	providerPage = parse(layout, "templates/provider.html")
-	serverPage   = parse(layout, "templates/server.html")
+	providerPage = page("templates/provider.html")
+	serverPage   = page("templates/server.html")
 )
 
-func parse(base *template.Template, names ...string) *template.Template {
-	return template.Must(template.Must(base.Clone()).ParseFS(files, names...))
+// page is the layout with a tab's own part.
+func page(name string) *template.Template {
+	return template.Must(template.Must(layout.Clone()).ParseFS(files, name))
 }
 
 // Handler serves the interface under /ui/. Like the tuners it is open to

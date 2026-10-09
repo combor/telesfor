@@ -147,9 +147,7 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 		return provider.Source{}, fmt.Errorf("tf1: %w", err)
 	}
 	pass, stream := passOf(master)
-	client := *p.client
-	client.Transport = &session{
-		RoundTripper: p.client.Transport,
+	s := &session{
 		renewed: func(ctx context.Context) string {
 			again, err := p.feed(ctx, ch)
 			if err != nil {
@@ -166,6 +164,8 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 		pass:   pass,
 		signed: time.Now(),
 	}
+	client := *p.client
+	client.Transport = httpclient.Wrap(p.client.Transport, s.roundTrip)
 	return provider.Source{URL: master, Client: &client}, nil
 }
 
@@ -263,15 +263,14 @@ func passOf(address string) (pass, stream string) {
 	return "/" + first, at.Host + "/" + file
 }
 
-// session is the transport of a stream's HTTP client, which the stream is
-// read through. It keeps the stream's pass good.
+// session sends the requests of a stream's HTTP client, which the stream is
+// read through, and keeps the stream's pass good.
 //
 // The pass is in the path of every address of the stream, and lasts four
 // hours. The stream goes on being asked for with the one it started with, so
 // a request that is refused is sent again with a new pass, which the requests
 // after it then go with.
 type session struct {
-	http.RoundTripper
 	renewed func(context.Context) string // gets a new pass, or none
 	rest    time.Duration                // how long a pass is left alone: one this new is not refused for its age
 
@@ -279,26 +278,6 @@ type session struct {
 	first  string    // the pass in the addresses ffmpeg asks for; empty if they carry none
 	pass   string    // the pass to ask with
 	signed time.Time // when it was handed out
-}
-
-func (s *session) RoundTrip(req *http.Request) (*http.Response, error) {
-	return s.roundTrip(req, s.RoundTripper)
-}
-
-// SegmentTransport keeps the renewal of the pass shared with the playlists
-// while sending segment requests over the separate connection pool.
-func (s *session) SegmentTransport() (http.RoundTripper, func()) {
-	transport, release := httpclient.SegmentTransport(s.RoundTripper)
-	return &segmentSession{session: s, transport: transport}, release
-}
-
-type segmentSession struct {
-	session   *session
-	transport http.RoundTripper
-}
-
-func (s *segmentSession) RoundTrip(req *http.Request) (*http.Response, error) {
-	return s.session.roundTrip(req, s.transport)
 }
 
 func (s *session) roundTrip(req *http.Request, transport http.RoundTripper) (*http.Response, error) {

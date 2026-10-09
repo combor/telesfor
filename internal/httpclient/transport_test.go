@@ -179,6 +179,42 @@ func TestSegmentPoolReuse(t *testing.T) {
 	}
 }
 
+// A wrapper's handling holds for segments, which still go over HTTP/1.1, and
+// for the rest, which keep HTTP/2.
+func TestWrap(t *testing.T) {
+	origin := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Header.Get("X-Test-Auth") != "present" {
+			t.Errorf("%s over %s did not go through the wrapper", req.URL.Path, req.Proto)
+		}
+		io.WriteString(w, "ok")
+	}))
+	origin.EnableHTTP2 = true
+	origin.StartTLS()
+	defer origin.Close()
+	shared := NewTransport(origin.Client().Transport.(*http.Transport))
+	defer shared.(*transport).CloseIdleConnections()
+	client := &http.Client{Transport: Wrap(shared, func(req *http.Request, next http.RoundTripper) (*http.Response, error) {
+		return authenticatedTransport{next}.RoundTrip(req)
+	})}
+	segments := *client
+	segmentTransport, release := SegmentTransport(client.Transport)
+	defer release()
+	segments.Transport = segmentTransport
+	get := func(client *http.Client, path string, want int) {
+		t.Helper()
+		resp, err := client.Get(origin.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.ProtoMajor != want {
+			t.Errorf("%s used %s, want HTTP/%d", path, resp.Proto, want)
+		}
+	}
+	get(client, "/playlist", 2)
+	get(&segments, "/segment", 1)
+}
+
 type authenticatedTransport struct{ base http.RoundTripper }
 
 func (t authenticatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {

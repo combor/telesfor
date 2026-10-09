@@ -460,7 +460,7 @@ func TestCancellableSession(t *testing.T) {
 	defer origin.Close()
 	base := &http.Client{Transport: httpclient.NewTransport(origin.Client().Transport.(*http.Transport))}
 	defer base.CloseIdleConnections()
-	s := &session{RoundTripper: base.Transport, first: "/old", pass: "/old"}
+	s := &session{first: "/old", pass: "/old"}
 	s.renewed = func(ctx context.Context) string {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, origin.URL+"/sign", nil)
 		resp, err := base.Do(req)
@@ -476,7 +476,7 @@ func TestCancellableSession(t *testing.T) {
 		}
 		return string(body)
 	}
-	client := &http.Client{Transport: s}
+	client := &http.Client{Transport: httpclient.Wrap(base.Transport, s.roundTrip)}
 	segments := *client
 	segmentTransport, release := httpclient.SegmentTransport(client.Transport)
 	defer release()

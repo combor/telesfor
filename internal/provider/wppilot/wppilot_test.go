@@ -274,7 +274,7 @@ func serve(t *testing.T, db *bolt.DB) (*pilot, *Provider) {
 	f.url = server.URL
 
 	client := *server.Client()
-	client.Transport = agent{client.Transport}
+	client.Transport = httpclient.Wrap(client.Transport, agent)
 	p := &Provider{client: &client, db: db, site: server.URL, poll: time.Millisecond, codeLife: time.Minute}
 	var err error
 	if p.account, err = load(db); err != nil {

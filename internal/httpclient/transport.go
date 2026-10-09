@@ -12,9 +12,16 @@ func NewTransport(base *http.Transport) http.RoundTripper {
 	return &transport{base: base, http1: segmentPool(base)}
 }
 
+// Wrap returns a transport that sends each request with send, which passes it
+// on to next. Its segment transport does the same over next's segment pool, so
+// a wrapper's handling of requests holds for segments too.
+func Wrap(next http.RoundTripper, send func(req *http.Request, next http.RoundTripper) (*http.Response, error)) http.RoundTripper {
+	return &wrapped{through{next, send}}
+}
+
 // SegmentTransport selects a segment pool and returns a release function for
-// any pool it creates. Wrappers implement the same method to preserve their
-// request handling. Other transports keep their original protocol and ownership.
+// any pool it creates. A transport from Wrap keeps its request handling there.
+// Other transports keep their original protocol and ownership.
 func SegmentTransport(base http.RoundTripper) (http.RoundTripper, func()) {
 	if base == nil {
 		base = http.DefaultTransport
@@ -57,4 +64,24 @@ func (t *transport) SegmentTransport() (http.RoundTripper, func()) {
 func (t *transport) CloseIdleConnections() {
 	t.base.CloseIdleConnections()
 	t.http1.CloseIdleConnections()
+}
+
+// through sends each request with send over next.
+type through struct {
+	next http.RoundTripper
+	send func(*http.Request, http.RoundTripper) (*http.Response, error)
+}
+
+func (t *through) RoundTrip(req *http.Request) (*http.Response, error) {
+	return t.send(req, t.next)
+}
+
+// wrapped is a transport from Wrap. Its segment transport is a through, which
+// has no segment pool of its own to hand out: asked for one, it is used as it
+// is.
+type wrapped struct{ through }
+
+func (w *wrapped) SegmentTransport() (http.RoundTripper, func()) {
+	next, release := SegmentTransport(w.next)
+	return &through{next, w.send}, release
 }

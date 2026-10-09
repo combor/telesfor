@@ -136,22 +136,23 @@ type arrival struct {
 	first   int64         // how much of that came at once, with the first of it
 	wait    time.Duration // from asking for it to the first of it
 	flow    time.Duration // from the first of it to the last
-	fastest float64       // combined audio/video throughput during its fastest half second; 0 without a complete sample
+	fastest float64       // how fast picture and sound came together in its fastest half second, in bits a second; 0 if none was timed in full
 	length  time.Duration // how long the segment plays
 	newest  bool          // the stream has none after it yet
 }
 
-// speed estimates connection capacity from combined audio/video throughput
-// while the segment arrived. A transfer starts slowly on a connection that
-// has been idle, the slower the further away the provider is,
-// and a provider may hand a segment out slower than the connection carries
-// it: EBC's newest comes in three seconds, where its older ones take a quarter
-// of one. So the whole of a transfer tells too little of the connection.
+// speed tells how fast the connection was while a segment came: as fast as
+// the picture and the sound came together in the fastest half second of it.
+// A transfer starts slowly on a connection that has been idle, the slower the
+// further away the provider is, and a provider may hand a segment out slower
+// than the connection carries it: EBC's newest comes in three seconds, where
+// its older ones take a quarter of one. So the whole of a transfer tells too
+// little of the connection.
 //
-// Without a complete shared sample, use the segment's own body rate after
-// its initial burst. Bytes that arrived at once had been waiting on the
-// way. One too small to time tells nothing, unless all of it came at
-// once: the connection is then as fast as that at least.
+// A segment of which no half second was timed in full tells by what came
+// after the first of it, over the time that took: what came at once had been
+// waiting on the way. One too small to time tells nothing, unless all of it
+// came at once: the connection is then as fast as that at least.
 func (a arrival) speed() (float64, bool) {
 	switch rest := a.size - a.first; {
 	case a.fastest > 0:
@@ -164,6 +165,8 @@ func (a arrival) speed() (float64, bool) {
 	return 0, false
 }
 
+// transferRate is how fast so many bytes came in so long, in bits a second.
+// Less time than minFlow counts as minFlow.
 func transferRate(bytes int64, elapsed time.Duration) float64 {
 	return float64(bytes) * 8 / max(elapsed, minFlow).Seconds()
 }
@@ -378,8 +381,8 @@ func (c *controller) calmPeriod() time.Duration { return max(c.calm, calmSegment
 // coming is how a segment is coming, while ffmpeg waits for it.
 type coming struct {
 	got, of int64         // how much of how much has come, not counting what came at once with the first of it
-	speed   float64       // combined audio/video throughput, in bits a second
-	rate    float64       // this segment's delivery rate, in bits a second
+	speed   float64       // how fast picture and sound are coming together, in bits a second
+	rate    float64       // how fast it alone is coming, in bits a second
 	flow    time.Duration // for how long it has been coming
 	took    time.Duration // since when it was asked for
 	doubted time.Duration // for how long it has looked like one to give up

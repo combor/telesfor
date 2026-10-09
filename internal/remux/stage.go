@@ -120,9 +120,9 @@ func (s *stage) playlist(w http.ResponseWriter, req *http.Request, video bool) {
 		http.NotFound(w, req)
 		return
 	}
-	t, address, letter := &l.sound, s.ladder.sound, "a"
+	t, address, letter := l.track(video), s.ladder.sound, "a"
 	if video {
-		t, address, letter = &l.video, s.ladder.qualities[l.quality].playlist, "v"
+		address, letter = s.ladder.qualities[l.quality].playlist, "v"
 	}
 	// ffmpeg does without a playlist that it cannot read when it starts, and
 	// plays what the other has: the picture without its sound, or the sound
@@ -146,7 +146,7 @@ func (s *stage) playlist(w http.ResponseWriter, req *http.Request, video bool) {
 	// begins waits for its first segment to be listed.
 	for waited := time.Duration(0); ; {
 		s.mu.Lock()
-		complete := t.until >= 0 && t.list.next() >= t.until
+		complete := t.complete()
 		s.mu.Unlock()
 		if complete {
 			break
@@ -193,14 +193,8 @@ func (s *stage) playlist(w http.ResponseWriter, req *http.Request, video bool) {
 		}
 	}
 
-	// ffmpeg asks for a segment while it still reads the one before, and
-	// skips what it reads if the playlist no longer lists it.
 	s.mu.Lock()
-	from := max(t.from, t.asked-1)
-	if t.until >= 0 {
-		from = max(t.from, min(t.asked, t.until-1)-1)
-	}
-	text := t.list.write(from, t.until, max(t.from, 0), t.until >= 0 && t.list.next() >= t.until, func(kind string, seq int64, uri string) string {
+	text := t.list.write(t.listFrom(), t.until, max(t.from, 0), t.complete(), func(kind string, seq int64, uri string) string {
 		u, err := url.Parse(uri)
 		if err != nil {
 			return uri
@@ -254,13 +248,10 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 		http.NotFound(w, req)
 		return
 	}
-	t := &l.sound
-	if video {
-		t = &l.video
-	}
+	t := l.track(video)
 	s.mu.Lock()
 	wanted, listed := t.list.find(seq)
-	if listed = listed && (t.until < 0 || seq < t.until); listed {
+	if listed = listed && t.within(seq); listed {
 		t.asked = max(t.asked, seq)
 	}
 	newest := seq >= t.list.next()-1 // ffmpeg has caught up with the stream
@@ -275,7 +266,7 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 	begin := func() bool {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if t.until >= 0 && seq >= t.until {
+		if !t.within(seq) {
 			return false
 		}
 		t.started = max(t.started, seq)

@@ -35,6 +35,37 @@ type track struct {
 	started int64    // the latest it has begun to get
 }
 
+// track returns the picture of the leg, or its sound.
+func (l *leg) track(video bool) *track {
+	if video {
+		return &l.video
+	}
+	return &l.sound
+}
+
+// placed tells whether it is known where in its playlist the leg begins.
+func (t *track) placed() bool { return t.from >= 0 }
+
+// within tells whether a segment comes before the end of the leg, if it has
+// one.
+func (t *track) within(seq int64) bool { return t.until < 0 || seq < t.until }
+
+// complete tells whether the playlist lists all that the leg has: the leg
+// ends, and the playlist gets as far.
+func (t *track) complete() bool { return t.until >= 0 && t.list.next() >= t.until }
+
+// listFrom is where the playlist that ffmpeg is given begins: at the segment
+// before the latest of the leg's that it has asked for. ffmpeg asks for a
+// segment while it still reads the one before, and skips what it reads if the
+// playlist no longer lists it.
+func (t *track) listFrom() int64 {
+	last := t.asked
+	if t.until >= 0 {
+		last = min(t.asked, t.until-1)
+	}
+	return max(t.from, last-1)
+}
+
 // begin starts the first leg, in the given quality.
 func (s *stage) begin(quality int) (*leg, error) {
 	s.mu.Lock()
@@ -73,7 +104,7 @@ func (l *leg) cut() {
 	// there: the next then begins with both at the same time, as a stream
 	// does, and as ffmpeg needs it to. See place.
 	last, ok := l.video.list.find(l.video.until - 1)
-	if !ok || l.sound.from < 0 {
+	if !ok || !l.sound.placed() {
 		return
 	}
 	// By the clock, where the playlists tell the time. Those that do not are
@@ -203,19 +234,14 @@ func (s *stage) takeOver(next *leg) {
 // segment may be listed between the two, and ffmpeg gives up on a picture
 // that begins seconds after the sound.
 func (s *stage) place(l *leg, t *track, list playlist, video bool) bool {
-	if t.from >= 0 {
+	if t.placed() {
 		return true
 	}
-	before, other := (*track)(nil), &l.video
-	if video {
-		other = &l.sound
-	}
+	before, other := (*track)(nil), l.track(!video)
 	if l.before != nil {
-		if before = &l.before.sound; video {
-			before = &l.before.video
-		}
+		before = l.before.track(video)
 	}
-	if before == nil || before.from < 0 {
+	if before == nil || !before.placed() {
 		t.from = max(list.first(), list.next()-headStart)
 		if first, placed := other.list.find(other.from); placed {
 			if same, ok := list.starting(first.at); ok {

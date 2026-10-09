@@ -1,7 +1,6 @@
 package globo
 
 import (
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -9,6 +8,7 @@ import (
 	"time"
 
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/providertest"
 	"github.com/combor/telesfor/internal/store"
 )
 
@@ -87,25 +87,9 @@ func TestLive(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			get := func(address string) (*http.Response, string) {
-				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, address, nil)
-				if err != nil {
-					t.Fatal(err)
-				}
-				resp, err := source.Client.Do(req)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer resp.Body.Close()
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					t.Fatal(err)
-				}
-				return resp, string(body)
-			}
 			// The stream's URL is of its master playlist. The first quality
 			// in it tells whether the stream can be played.
-			resp, playlist := get(source.URL)
+			resp, playlist := providertest.Get(t, source.Client, source.URL)
 			if _, quality, listed := strings.Cut(playlist, "#EXT-X-STREAM-INF:"); listed {
 				_, quality, _ = strings.Cut(quality, "\n") // after its attributes
 				quality, _, _ = strings.Cut(quality, "\n")
@@ -113,7 +97,7 @@ func TestLive(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				resp, playlist = get(address.String())
+				resp, playlist = providertest.Get(t, source.Client, address.String())
 			}
 			if resp.StatusCode != http.StatusOK || !strings.HasPrefix(playlist, "#EXTM3U") ||
 				!strings.Contains(playlist, "#EXTINF") || strings.Contains(playlist, "#EXT-X-KEY") {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/combor/telesfor/internal/httpclient"
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/providertest"
 	"github.com/combor/telesfor/internal/store"
 )
 
@@ -221,19 +222,6 @@ func (f *tf1) set(change func()) {
 	change()
 }
 
-// await waits for the provider's sign-in to reach a state.
-func await(t *testing.T, p *Provider, want provider.LoginState) provider.Login {
-	t.Helper()
-	for range 2000 {
-		if login := p.Login(); login.State == want {
-			return login
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("sign-in stands at %+v, want state %d", p.Login(), want)
-	return provider.Login{}
-}
-
 func TestSignIn(t *testing.T) {
 	db, err := store.Open(t.TempDir())
 	if err != nil {
@@ -293,7 +281,7 @@ func TestSignInFails(t *testing.T) {
 			t.Fatal(err)
 		}
 		// The account that was there stays.
-		if login := await(t, p, provider.SignedIn); login.Problem != want {
+		if login := providertest.Await(t, p, provider.SignedIn); login.Problem != want {
 			t.Errorf("code answered with %s: %+v, want the problem %q", code, login, want)
 		}
 	}
@@ -320,7 +308,7 @@ func TestSignInFails(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	await(t, p, provider.SignedIn)
+	providertest.Await(t, p, provider.SignedIn)
 	if waited := f.polled[1].Sub(f.polled[0]); len(f.polled) != 2 || waited < p.slower {
 		t.Errorf("asked about the code %d times, the second %s after the first: want it %s later", len(f.polled), waited, p.slower)
 	}
@@ -331,7 +319,7 @@ func TestSignOutGivesUpTheCode(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	await(t, p, provider.Pending)
+	providertest.Await(t, p, provider.Pending)
 	if err := p.SignOut(); err != nil {
 		t.Fatal(err)
 	}
@@ -504,13 +492,8 @@ func TestPass(t *testing.T) {
 	// As ffmpeg asks: always with the pass the stream started with.
 	fetch := func(client *http.Client, file string) (status int, body, from string) {
 		t.Helper()
-		resp, err := client.Get(f.url + "/pass1/prod/TFX/cmaf/out/" + file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		read, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, string(read), resp.Request.URL.Path
+		resp, body := providertest.Get(t, client, f.url+"/pass1/prod/TFX/cmaf/out/"+file)
+		return resp.StatusCode, body, resp.Request.URL.Path
 	}
 
 	if status, body, _ := fetch(source.Client, "high.m3u8"); status != http.StatusOK || body != "TFX/high.m3u8" || f.passes != 1 {
@@ -549,9 +532,9 @@ func TestPass(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.set(func() { f.expired["pass4"] = true })
-	resp, err := again.Client.Get(f.url + "/pass4/prod/TFX/cmaf/out/high.m3u8")
-	if err != nil || resp.StatusCode != http.StatusForbidden || f.passes != 4 {
-		t.Errorf("a new pass refused: %v, %v with %d passes handed out, want 403 and no pass more", resp, err, f.passes)
+	resp, _ := providertest.Get(t, again.Client, f.url+"/pass4/prod/TFX/cmaf/out/high.m3u8")
+	if resp.StatusCode != http.StatusForbidden || f.passes != 4 {
+		t.Errorf("a new pass refused: %s with %d passes handed out, want 403 and no pass more", resp.Status, f.passes)
 	}
 }
 

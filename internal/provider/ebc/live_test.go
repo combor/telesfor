@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/combor/telesfor/internal/provider/providertest"
 )
 
 // TestLive checks the provider against EBC's real streams and guide, which the
@@ -29,7 +31,7 @@ func TestLive(t *testing.T) {
 	t.Run("guide", func(t *testing.T) {
 		from := time.Now().Truncate(time.Hour)
 		to := from.Add(48 * time.Hour)
-		programmes, err := p.Programmes(t.Context(), channels, from, to)
+		guide, err := p.Programmes(t.Context(), channels, from, to)
 		if err != nil && strings.Contains(err.Error(), "-ebc-proxy") {
 			t.Skip(err)
 		}
@@ -37,27 +39,17 @@ func TestLive(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, channel := range channels {
-			count, named := 0, 0
-			covered := from // the guide has no gap up to here
+			programmes := providertest.Covered(t, guide, channel, from, to)
+			named := 0
 			for _, programme := range programmes {
-				if programme.ChannelID != channel.ID {
-					continue
-				}
-				if programme.Title == "" || !programme.Start.Before(programme.Stop) || programme.Start.After(covered) {
-					t.Errorf("programme %+v, want a title, a start before its stop and no gap after %s", programme, covered)
-				}
-				if count++; programme.Description == "" {
+				if programme.Description == "" {
 					named++
 				}
-				covered = programme.Stop
 			}
-			t.Logf("%s: %d programmes, %d that EBC names", channel.Name, count, named)
-			if covered.Before(to) {
-				t.Errorf("%s: the guide ends at %s, want it to reach %s", channel.Name, covered, to)
-			}
+			t.Logf("%s: %d programmes, %d that EBC names", channel.Name, len(programmes), named)
 			// TV Brasil's own guide named 80 programmes in two days when this was written.
 			if channel.ID == "tv-brasil" && named < 30 {
-				t.Errorf("TV Brasil: EBC names %d programmes of %d, want its guide", named, count)
+				t.Errorf("TV Brasil: EBC names %d programmes of %d, want its guide", named, len(programmes))
 			}
 		}
 	})

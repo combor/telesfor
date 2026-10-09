@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/providertest"
 )
 
 // The playlists of a channel, as France Télévisions lays them out: six
@@ -419,9 +420,9 @@ func TestStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.revoked["pass3"] = true
-	req, _ := http.NewRequest(http.MethodGet, f.url+"/pass3/live/france-2/high.m3u8", nil)
-	if resp, err := again.Client.Do(req); err != nil || resp.StatusCode != http.StatusForbidden || f.passes != 3 {
-		t.Errorf("a new pass refused: %v, %v with %d passes handed out, want 403 and no pass more", resp, err, f.passes)
+	resp, _ := providertest.Get(t, again.Client, f.url+"/pass3/live/france-2/high.m3u8")
+	if resp.StatusCode != http.StatusForbidden || f.passes != 3 {
+		t.Errorf("a new pass refused: %s with %d passes handed out, want 403 and no pass more", resp.Status, f.passes)
 	}
 	if f.directed != 1 {
 		t.Errorf("asked for the list of live channels %d times, want once for both tunes", f.directed)
@@ -443,12 +444,7 @@ func TestStreamOfOneQuality(t *testing.T) {
 	f.index = later
 	f.mu.Unlock()
 
-	resp, err := source.Client.Get(source.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if playlist, _ := io.ReadAll(resp.Body); string(playlist) != later {
+	if _, playlist := providertest.Get(t, source.Client, source.URL); playlist != later {
 		t.Errorf("the playlist, read again:\n%s\nwant the one with the next segment:\n%s", playlist, later)
 	}
 }

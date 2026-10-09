@@ -19,6 +19,7 @@ import (
 
 	"github.com/combor/telesfor/internal/httpclient"
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/providertest"
 	"github.com/combor/telesfor/internal/store"
 )
 
@@ -291,19 +292,6 @@ func signedIn(t *testing.T) (*pilot, *Provider) {
 	return f, p
 }
 
-// await waits for the provider's sign-in to reach a state.
-func await(t *testing.T, p *Provider, want provider.LoginState) provider.Login {
-	t.Helper()
-	for range 2000 {
-		if login := p.Login(); login.State == want {
-			return login
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("sign-in stands at %+v, want state %d", p.Login(), want)
-	return provider.Login{}
-}
-
 // viewers counts those the provider takes to be watching.
 func viewers(p *Provider) (n int) {
 	p.mu.Lock()
@@ -420,7 +408,7 @@ func TestSignInFails(t *testing.T) {
 			t.Fatal(err)
 		}
 		// The account that was there stays.
-		login := await(t, p, provider.SignedIn)
+		login := providertest.Await(t, p, provider.SignedIn)
 		for range 2000 {
 			if login = p.Login(); login.Problem != "" {
 				break
@@ -454,7 +442,7 @@ func TestSignOutGivesUpTheCode(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	await(t, p, provider.Pending)
+	providertest.Await(t, p, provider.Pending)
 	if err := p.SignOut(); err != nil {
 		t.Fatal(err)
 	}
@@ -501,7 +489,7 @@ func TestConsents(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if login := await(t, p, provider.SignedIn); login.Problem != consents {
+	if login := providertest.Await(t, p, provider.SignedIn); login.Problem != consents {
 		t.Errorf("signed in without the consents: %+v, want to be told of them", login)
 	}
 	// The guide is when telesfor learns that they have been accepted.
@@ -561,11 +549,7 @@ func TestStream(t *testing.T) {
 	segments, release := httpclient.SegmentClient(source.Client)
 	defer release()
 	for client, file := range map[*http.Client]string{source.Client: "playlist.m3u8", segments: "media.ts"} {
-		resp, err := client.Get(f.url + "/cdn/9/" + file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
+		resp, _ := providertest.Get(t, client, f.url+"/cdn/9/"+file)
 		if want := file + " by " + browser + " with "; resp.StatusCode != http.StatusOK || !slices.Contains(see(f, func() []string { return f.fetched }), want) {
 			t.Errorf("%s: %s, asked for as %q: want it asked for as %q", file, resp.Status, f.fetched, want)
 		}

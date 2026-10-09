@@ -15,6 +15,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/provider/providertest"
 	"github.com/combor/telesfor/internal/store"
 )
 
@@ -132,19 +133,6 @@ func signedIn(t *testing.T) (*globo, *Provider) {
 	return g, p
 }
 
-// await waits for the provider's sign-in to reach a state.
-func await(t *testing.T, p *Provider, want provider.LoginState) provider.Login {
-	t.Helper()
-	for range 2000 {
-		if login := p.Login(); login.State == want {
-			return login
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("sign-in stands at %+v, want state %d", p.Login(), want)
-	return provider.Login{}
-}
-
 func TestSignIn(t *testing.T) {
 	db, err := store.Open(t.TempDir())
 	if err != nil {
@@ -205,7 +193,7 @@ func TestSignInFails(t *testing.T) {
 			t.Fatal(err)
 		}
 		// The account that was there stays.
-		if login := await(t, p, provider.SignedIn); login.Problem != want {
+		if login := providertest.Await(t, p, provider.SignedIn); login.Problem != want {
 			t.Errorf("code answered with %d: %+v, want the problem %q", status, login, want)
 		}
 	}
@@ -233,7 +221,7 @@ func TestSignOutGivesUpTheCode(t *testing.T) {
 	if err := p.SignIn(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	await(t, p, provider.Pending)
+	providertest.Await(t, p, provider.Pending)
 	if err := p.SignOut(); err != nil {
 		t.Fatal(err)
 	}

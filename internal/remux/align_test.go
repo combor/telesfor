@@ -110,14 +110,7 @@ func TestAlignerGivesUp(t *testing.T) {
 // TestAlignerOnFFmpegOutput checks the aligner against the real thing: a stream
 // from ffmpeg whose audio starts three seconds after its video.
 func TestAlignerOnFFmpegOutput(t *testing.T) {
-	ffmpeg, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		t.Skip("ffmpeg is not installed")
-	}
-	ffprobe, err := exec.LookPath("ffprobe")
-	if err != nil {
-		t.Skip("ffprobe is not installed")
-	}
+	ffmpeg, ffprobe := installed(t, "ffmpeg"), installed(t, "ffprobe")
 	stream, err := exec.Command(ffmpeg, "-hide_banner", "-loglevel", "error",
 		"-f", "lavfi", "-i", "testsrc=duration=6:size=160x120:rate=25",
 		"-itsoffset", "3", "-f", "lavfi", "-i", "sine=duration=3",

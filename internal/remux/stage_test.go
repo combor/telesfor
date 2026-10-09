@@ -229,14 +229,7 @@ func watch(t *testing.T, ffprobe string, stream []byte) watched {
 // TestCopySwitches plays a generated live stream that comes in two qualities
 // end to end, with a provider that makes the quality change on the way.
 func TestCopySwitches(t *testing.T) {
-	ffmpeg, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		t.Skip("ffmpeg is not installed")
-	}
-	ffprobe, err := exec.LookPath("ffprobe")
-	if err != nil {
-		t.Skip("ffprobe is not installed")
-	}
+	ffmpeg, ffprobe := installed(t, "ffmpeg"), installed(t, "ffprobe")
 	const high, low = 320, 160 // how wide the qualities are
 
 	for _, test := range []struct {
@@ -395,10 +388,7 @@ func (gone) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 // A stream ends with a viewer who takes no more of it, whatever its ffmpeg
 // has left to write: nobody is there to read that.
 func TestCopyEndsWithItsViewer(t *testing.T) {
-	ffmpeg, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		t.Skip("ffmpeg is not installed")
-	}
+	ffmpeg := installed(t, "ffmpeg")
 	upstream := httptest.NewServer(newStation(t, ffmpeg, "mpegts"))
 	defer upstream.Close()
 	remuxer, err := New()

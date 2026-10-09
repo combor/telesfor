@@ -9,13 +9,21 @@ import (
 	"testing"
 )
 
+// installed returns where a program is, and skips the test if it is not
+// installed.
+func installed(t *testing.T, program string) string {
+	t.Helper()
+	path, err := exec.LookPath(program)
+	if err != nil {
+		t.Skip(program + " is not installed")
+	}
+	return path
+}
+
 // TestCopy remuxes a short generated HLS stream end to end with ffmpeg, through
 // a relay and across a redirect.
 func TestCopy(t *testing.T) {
-	ffmpeg, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		t.Skip("ffmpeg is not installed")
-	}
+	ffmpeg := installed(t, "ffmpeg")
 
 	dir := t.TempDir()
 	generate := exec.Command(ffmpeg, "-hide_banner", "-loglevel", "error",

@@ -58,7 +58,7 @@ const (
 
 // route is what is known of the connection that a provider's streams come
 // over: how fast it was when last measured, and what streams it carries now.
-// Its zero value is a route of which nothing is known yet.
+// Its zero value is ready to use.
 type route struct {
 	mu      sync.Mutex
 	speed   float64                 // in bits a second
@@ -136,23 +136,23 @@ type arrival struct {
 	first   int64         // how much of that came at once, with the first of it
 	wait    time.Duration // from asking for it to the first of it
 	flow    time.Duration // from the first of it to the last
-	fastest float64       // how fast picture and sound came together in its fastest half second, in bits a second; 0 if none was timed in full
+	fastest float64       // picture and sound together in its fastest half second, in bits a second; 0 if none was timed in full
 	length  time.Duration // how long the segment plays
 	newest  bool          // the stream has none after it yet
 }
 
-// speed tells how fast the connection was while a segment came: as fast as
-// the picture and the sound came together in the fastest half second of it.
+// speed tells how fast the connection was while a segment came: picture and
+// sound together, in its fastest half second.
 // A transfer starts slowly on a connection that has been idle, the slower the
 // further away the provider is, and a provider may hand a segment out slower
 // than the connection carries it: EBC's newest comes in three seconds, where
 // its older ones take a quarter of one. So the whole of a transfer tells too
 // little of the connection.
 //
-// A segment of which no half second was timed in full tells by what came
-// after the first of it, over the time that took: what came at once had been
-// waiting on the way. One too small to time tells nothing, unless all of it
-// came at once: the connection is then as fast as that at least.
+// Without a half second timed in full, it goes by what came after the first
+// of it: what came at once had been waiting on the way. One too small to time
+// tells nothing, unless all of it came at once: the connection is then as
+// fast as that at least.
 func (a arrival) speed() (float64, bool) {
 	switch rest := a.size - a.first; {
 	case a.fastest > 0:
@@ -165,8 +165,6 @@ func (a arrival) speed() (float64, bool) {
 	return 0, false
 }
 
-// transferRate is how fast so many bytes came in so long, in bits a second.
-// Less time than minFlow counts as minFlow.
 func transferRate(bytes int64, elapsed time.Duration) float64 {
 	return float64(bytes) * 8 / max(elapsed, minFlow).Seconds()
 }
@@ -202,16 +200,14 @@ type controller struct {
 
 	mu sync.Mutex
 
-	// The quality, and how each stands.
 	quality   int        // the one being played
 	changedAt time.Time  // when it last changed
 	rose      time.Time  // when it last stepped up, if it has not stepped down since
 	standing  []standing // of each quality
 	warned    bool       // of the lowest quality being too much
 
-	// The speed of the connection, and how the segments come.
 	fast   average       // of the speed, in bits a second, over the latest few segments
-	slow   average       // of the speed, over as long as a step up waits
+	slow   average       // over as long as a step up waits
 	recent []fetch       // the latest segments of the quality being played, six at most
 	length time.Duration // of the latest segment
 	slowAt time.Time     // when a segment last came slowly
@@ -226,12 +222,11 @@ type controller struct {
 	dry       bool          // it is now
 }
 
-// standing is how a quality stands after it has failed: until when it is left
-// alone, and for how long it was last.
+// standing is how long a quality that failed is left alone.
 type standing struct {
-	barred    time.Time     // until when it is not stepped up to: it failed its trial
+	barred    time.Time     // until when it is not stepped up to
 	unfit     time.Time     // until when it is not played at all: it would not play
-	leftAlone time.Duration // for how long it was last left alone, either way
+	leftAlone time.Duration // for how long it was last left alone
 }
 
 func newController(name string, l *ladder, r *route, sent func() (time.Duration, time.Duration, bool)) *controller {
@@ -359,14 +354,9 @@ func (c *controller) reserve() time.Duration {
 	return reserve
 }
 
-// littleLeft tells whether little of the reserve is left: under a third of the
-// most it has been. mostLeft tells whether most of it is: two thirds at least.
-// Until the head start is sent, neither is so: there is no telling.
 func (c *controller) littleLeft(reserve time.Duration) bool { return c.full > 0 && reserve < c.full/3 }
 func (c *controller) mostLeft(reserve time.Duration) bool   { return c.full > 0 && reserve >= c.full*2/3 }
 
-// downShare is how much of the speed a quality may take to be stepped down
-// to: less when little of the reserve is left, for it has to grow again.
 func (c *controller) downShare(reserve time.Duration) float64 {
 	if c.littleLeft(reserve) {
 		return rushShare
@@ -374,15 +364,13 @@ func (c *controller) downShare(reserve time.Duration) float64 {
 	return holdShare
 }
 
-// calmPeriod is how long calm lasts on this stream: six of its segments at
-// least. See calm.
 func (c *controller) calmPeriod() time.Duration { return max(c.calm, calmSegments*c.length) }
 
 // coming is how a segment is coming, while ffmpeg waits for it.
 type coming struct {
 	got, of int64         // how much of how much has come, not counting what came at once with the first of it
-	speed   float64       // how fast picture and sound are coming together, in bits a second
-	rate    float64       // how fast it alone is coming, in bits a second
+	speed   float64       // of picture and sound together, in bits a second
+	rate    float64       // of this segment alone, in bits a second
 	flow    time.Duration // for how long it has been coming
 	took    time.Duration // since when it was asked for
 	doubted time.Duration // for how long it has looked like one to give up
@@ -593,8 +581,6 @@ func (c *controller) unfits(quality int) {
 	c.rose = time.Time{} // a step up to it was no trial of the connection
 }
 
-// leaveAlone returns until when a quality that failed is to be left alone,
-// counting from now: twice as long as the last time. See bar.
 func (c *controller) leaveAlone(quality int, now time.Time) time.Time {
 	s := &c.standing[quality]
 	s.leftAlone = min(max(2*s.leftAlone, bar), barMost)

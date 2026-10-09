@@ -91,7 +91,6 @@ func TestGetPutDelete(t *testing.T) {
 	if found, err := Get(db, "owner", "key", &got); !found || err != nil || got.Name != "one" {
 		t.Fatalf("after Put: found = %v, err = %v, got %+v", found, err, got)
 	}
-	// It is kept as JSON, under the key, in a bucket named for the owner.
 	var kept string
 	db.View(func(tx *bolt.Tx) error {
 		kept = string(tx.Bucket([]byte("owner")).Get([]byte("key")))

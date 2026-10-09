@@ -42,9 +42,8 @@ func get(t *testing.T, base *url.URL, ref string) response {
 	return response{resp.StatusCode, resp.Request.URL, resp.Header, string(body)}
 }
 
-// relayTo opens a relay for the stream behind manifest, read with client, and
-// returns it with the local address ffmpeg would read the manifest at. The
-// relay closes when the test ends.
+// relayTo returns a relay for manifest and the local address ffmpeg would
+// read it at.
 func relayTo(t *testing.T, manifest string, client *http.Client) (*relay, *url.URL) {
 	t.Helper()
 	r, local, err := openRelay(manifest, client)

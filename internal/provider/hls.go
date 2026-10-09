@@ -5,11 +5,10 @@ import (
 	"strings"
 )
 
-// BestQuality returns the URI of the highest quality in a master playlist, by
-// its BANDWIDTH, or "" for a playlist that is not a master.
+// BestQuality returns the URI of the highest quality in a master playlist, or
+// "" for a playlist that is not a master.
 func BestQuality(master string) (uri string) {
-	// The bandwidth of the best quality so far, and of the one a tag has
-	// announced: its URI is the next line that is not a comment.
+	// announced is the bandwidth of a tag whose URI is yet to come, or -1.
 	most, announced := -1, -1
 	for line := range strings.Lines(master) {
 		line = strings.TrimSpace(line)

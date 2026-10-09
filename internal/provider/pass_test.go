@@ -13,7 +13,6 @@ import (
 	"github.com/combor/telesfor/internal/httpclient"
 )
 
-// sender is a transport that sends a request with a func.
 type sender func(*http.Request) (*http.Response, error)
 
 func (send sender) RoundTrip(req *http.Request) (*http.Response, error) { return send(req) }
@@ -47,7 +46,7 @@ func TestPassSend(t *testing.T) {
 }
 
 func TestPassRenew(t *testing.T) {
-	asked, handing := 0, "/pass2" // how often a new pass was asked for, and what is handed out then
+	asked, handing := 0, "/pass2"
 	p := NewPass("/pass1", time.Hour, func(context.Context) string {
 		asked++
 		return handing
@@ -60,8 +59,7 @@ func TestPassRenew(t *testing.T) {
 	}
 	// A new pass that is refused is refused for something else.
 	renew("/pass1", "", 0)
-	// Once it has had its rest, a new one is asked for, and the requests
-	// after go with it.
+	// Once it has had its rest, a new one is asked for.
 	p.signed = p.signed.Add(-time.Hour)
 	renew("/pass1", "/pass2", 1)
 	if pass := p.Current(); pass != "/pass2" {
@@ -69,7 +67,7 @@ func TestPassRenew(t *testing.T) {
 	}
 	// The new one has its rest too.
 	renew("/pass2", "", 1)
-	// With no new pass to be had, the stream goes on with the one it has.
+	// With no new pass to be had, the old one stays.
 	p.signed = p.signed.Add(-time.Hour)
 	handing = ""
 	renew("/pass2", "", 2)
@@ -77,7 +75,6 @@ func TestPassRenew(t *testing.T) {
 		t.Errorf("after no new pass was handed out, asking with %s, want /pass2", pass)
 	}
 
-	// A stream whose addresses carry no pass has none to renew.
 	none := NewPass("", 0, func(context.Context) string {
 		t.Error("a pass was asked for to a stream without one")
 		return "/pass"
@@ -87,8 +84,6 @@ func TestPassRenew(t *testing.T) {
 	}
 }
 
-// Requests that are refused at once ask for a new pass once, and all go on
-// with it.
 func TestPassRenewedOnce(t *testing.T) {
 	asked := 0
 	p := NewPass("/pass1", 0, func(context.Context) string {
@@ -109,9 +104,8 @@ func TestPassRenewedOnce(t *testing.T) {
 	}
 }
 
-// A segment that is refused is sent again with a new pass over the segment
-// pool, with its range. The new pass is asked for over the ordinary
-// transport, and the playlists after it go there with it.
+// A refused segment is sent again over the segment pool with its range; the
+// new pass and the playlists after go over the ordinary transport.
 func TestPassOverTheSegmentPool(t *testing.T) {
 	var mu sync.Mutex
 	seen := map[string][]int{}
@@ -155,8 +149,6 @@ func TestPassOverTheSegmentPool(t *testing.T) {
 		}
 		return string(body)
 	})
-	// As a provider's session sends: again with a new pass when one is
-	// refused.
 	client := &http.Client{Transport: httpclient.Wrap(base.Transport, func(req *http.Request, next http.RoundTripper) (*http.Response, error) {
 		pass := p.Current()
 		resp, err := p.Send(next, req, pass)

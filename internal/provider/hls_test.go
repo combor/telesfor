@@ -6,7 +6,6 @@ import (
 )
 
 func TestBestQuality(t *testing.T) {
-	// The sound in a playlist of its own, and the lowest quality first.
 	master := `#EXTM3U
 #EXT-X-VERSION:5
 #EXT-X-MEDIA:TYPE=AUDIO,URI="audio.m3u8",GROUP-ID="audio",NAME="Undetermined",DEFAULT=YES

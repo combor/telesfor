@@ -26,7 +26,7 @@ func repairDTS(packets []byte, late *atomic.Int64) {
 	for packet := range packetsIn(packets) {
 		pts, dts := stamps(packet)
 		if dts == nil {
-			continue // no frame begins here, or one that is decoded as it is shown
+			continue
 		}
 		// How long after the frame is shown it is decoded. The clock wraps
 		// around, so a frame that is decoded in time comes out as one that is

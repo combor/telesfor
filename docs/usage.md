@@ -248,14 +248,13 @@ never shows the accounts, and leaves out a proxy's user name and password.
 | WP Pilot has no channels | Sign in on the settings page. See [WP Pilot](#wp-pilot). |
 | An EBC or TV Cultura channel is unavailable | The broadcaster is not streaming it at the moment. A proxy or an account will not bring it back. |
 | Plex shows a playback error after its DVR was set up again | Quit and reopen the Plex app. |
-| The guide is missing | Check that the provider's guide address from [Connect Plex](../README.md#connect-plex) is reachable from Plex and selected as its XMLTV guide. |
+| The guide is missing | Check that the provider's [guide address](../README.md#connect-plex) is reachable from Plex and selected as its XMLTV guide. |
 | Playback stops when the terminal closes | Keep telesfor running for both viewing and scheduled recordings. |
 
 Use `/discover.json` to check a tuner, `/lineup.json` to see its channels,
-or `/xmltv.xml` for its guide. TVP's are at the root, and the other
-providers' under their tuner's path, such as `/globo/xmltv.xml`, as
-[Connect Plex](../README.md#connect-plex) lists. If you changed the port,
-update these addresses too.
+or `/xmltv.xml` for its guide, under its address in
+[Connect Plex](../README.md#connect-plex). If you changed the port, update
+these addresses too.
 
 ### Reading the log
 

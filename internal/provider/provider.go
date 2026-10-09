@@ -5,10 +5,6 @@
 // add a row for it to sources in cmd/telesfor/main.go, which gives it a tuner
 // and a proxy flag. The tuner comes with a tab on the settings page, where an
 // Account has its sign-in.
-//
-// The package also holds the helpers that providers share: Client for their
-// HTTP client, Fill, UntilNext and PlainText for their guides, BestQuality for
-// a master playlist, and Pass for a stream whose addresses carry a pass.
 package provider
 
 import (

@@ -157,7 +157,7 @@ func (p *Provider) authorize(ctx context.Context, code string) (*account, string
 		case answer.refused == "code_not_exists":
 			return nil, codeExpired
 		case answer.status == http.StatusTooManyRequests || answer.status >= http.StatusInternalServerError:
-			// WP is busy, which says nothing about the code.
+			// WP's trouble, not the code's.
 		default:
 			return nil, "WP refused the sign-in: " + strings.TrimSpace(http.StatusText(answer.status)+" "+answer.refused) + "."
 		}

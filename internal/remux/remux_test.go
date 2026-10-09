@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// installed returns where a program is, and skips the test if it is not
-// installed.
 func installed(t *testing.T, program string) string {
 	t.Helper()
 	path, err := exec.LookPath(program)
@@ -21,9 +19,6 @@ func installed(t *testing.T, program string) string {
 	return path
 }
 
-// inspect has ffprobe read an MPEG-TS stream and show what args ask for, and
-// returns what it printed, field by field. Anything ffprobe complains of
-// fails the test.
 func inspect(t *testing.T, ffprobe string, stream []byte, args ...string) []string {
 	t.Helper()
 	cmd := exec.Command(ffprobe, append([]string{"-hide_banner", "-loglevel", "error", "-f", "mpegts", "-i", "pipe:0", "-of", "csv=p=0"}, args...)...)

@@ -12,15 +12,13 @@ import (
 // this new is not refused for its age.
 const Rest = time.Minute
 
-// Pass keeps good the pass a provider puts first in the path of every address
-// of a stream, as /pass in /pass/live/index.m3u8. A pass lasts hours, and the
-// stream goes on being asked for with the one it started with. So a request is
-// sent with the newest pass, and one that is refused may be sent again with a
-// new one, which the requests after it then go with. Which refusals a new
-// pass may help with is for the provider to tell.
+// Pass keeps good the pass that starts the path of every address of a stream.
+// The stream goes on being asked for with the one it started with, so each
+// request is sent with the newest. The provider tells which refusals call for
+// a new one.
 type Pass struct {
 	fresh func(context.Context) string // gets a new pass, or none
-	rest  time.Duration                // see Rest
+	rest  time.Duration
 
 	mu     sync.Mutex
 	first  string    // the pass in the addresses ffmpeg asks for; empty if they carry none
@@ -29,8 +27,7 @@ type Pass struct {
 }
 
 // NewPass returns the Pass of a stream whose addresses carry first, which was
-// handed out just now. fresh gets a new pass, or none, and a pass is left
-// alone for rest once it is handed out.
+// just handed out.
 func NewPass(first string, rest time.Duration, fresh func(context.Context) string) *Pass {
 	return &Pass{fresh: fresh, rest: rest, first: first, pass: first, signed: time.Now()}
 }
@@ -57,7 +54,7 @@ func (p *Pass) Send(next http.RoundTripper, req *http.Request, pass string) (*ht
 	return resp, err
 }
 
-// Renew returns the pass to ask with after refused was refused: a new one, or
+// Renew returns the pass to ask with after one was refused: a new one, or
 // none if a new one will not help.
 func (p *Pass) Renew(ctx context.Context, refused string) string {
 	p.mu.Lock()

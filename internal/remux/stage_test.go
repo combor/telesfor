@@ -397,8 +397,6 @@ func TestCopyEndsWithItsViewer(t *testing.T) {
 	}
 }
 
-// stageOn opens a relay to the server at origin and a stage on it for TVP's
-// qualities, and begins its first leg. Both close when the test ends.
 func stageOn(t *testing.T, origin string, client *http.Client) (*stage, *leg) {
 	t.Helper()
 	r, _ := relayTo(t, origin+"/playlist", client)
@@ -462,9 +460,6 @@ func TestAudioContributesToFlow(t *testing.T) {
 	}
 }
 
-// A segment that is not watched, of the sound or of the lowest quality, comes
-// over HTTP/1.1 too, and stops coming once the viewer leaves or the leg is
-// cut before it. Other requests still go over HTTP/2.
 func TestUnwatchedSegmentCancellation(t *testing.T) {
 	for _, test := range []struct {
 		name, track string

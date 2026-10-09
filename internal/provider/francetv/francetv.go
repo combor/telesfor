@@ -623,9 +623,7 @@ func (p *Provider) playlist(ctx context.Context, ch channel, address *url.URL) (
 	return string(body), nil
 }
 
-// session sends the requests of a stream's HTTP client, which the stream is
-// read through, and keeps the stream's pass good: see provider.Pass. France
-// Télévisions' lasts six hours.
+// session keeps a stream's pass good. France Télévisions' lasts six hours.
 type session struct{ *provider.Pass }
 
 func (s session) roundTrip(req *http.Request, next http.RoundTripper) (*http.Response, error) {

@@ -9,17 +9,13 @@ const (
 	// when they run out, a good day after it started.
 	timestampBits = 33
 
-	// wrap keeps a time, or how far apart two are, to timestampBits: the
-	// clock wraps around.
 	wrap = 1<<timestampBits - 1
 
-	// clockRate is how many ticks a second the clock and the timestamps of
-	// MPEG-TS count.
+	// clockRate is how many ticks a second MPEG-TS timestamps count.
 	clockRate = 90000
 )
 
-// packetsIn yields b packet by packet. What is left at its end that is too
-// short to be a packet is left out.
+// packetsIn yields the whole packets in b.
 func packetsIn(b []byte) iter.Seq[[]byte] {
 	return func(yield func([]byte) bool) {
 		for ; len(b) >= packetSize; b = b[packetSize:] {
@@ -30,7 +26,6 @@ func packetsIn(b []byte) iter.Seq[[]byte] {
 	}
 }
 
-// pidOf returns the PID of a packet: which stream or table it is part of.
 func pidOf(packet []byte) int {
 	return int(packet[1]&0x1f)<<8 | int(packet[2])
 }
@@ -40,8 +35,7 @@ func unitStart(packet []byte) bool {
 	return packet[1]&0x40 != 0
 }
 
-// payload returns what a packet carries after its header and adaptation
-// field, or nil if it carries nothing.
+// payload returns what a packet carries, or nil if nothing.
 func payload(packet []byte) []byte {
 	start := 4
 	if packet[3]&0x20 != 0 { // an adaptation field comes first

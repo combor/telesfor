@@ -138,8 +138,6 @@ func (s *splicer) join(packet []byte) []byte {
 	return packet
 }
 
-// moveClock moves the clock a packet carries, if it carries one, and notes
-// where it got to.
 func (s *splicer) moveClock(packet []byte) {
 	clock, ok := clockReference(packet)
 	if !ok {
@@ -160,8 +158,6 @@ func (s *splicer) moveClock(packet []byte) {
 	s.clock = clock
 }
 
-// moveFrame moves when a frame is decoded and shown, as far as the stream at
-// hand is moved.
 func (s *splicer) moveFrame(pts, dts []byte) {
 	if s.shift == 0 {
 		return
@@ -173,8 +169,7 @@ func (s *splicer) moveFrame(pts, dts []byte) {
 }
 
 // follow notes when a frame of the clock's stream is decoded and shown, and
-// how long frames last. It keeps the frame from being decoded before the one
-// before it.
+// how long frames last.
 func (s *splicer) follow(pts, dts []byte) {
 	shown := timestamp(pts)
 	decoded := shown
@@ -202,8 +197,8 @@ func (s *splicer) follow(pts, dts []byte) {
 	}
 }
 
-// countOn makes a packet's continuity counter count on from where its PID's
-// had got to. A PID's counter counts the packets that carry something.
+// countOn makes a packet's continuity counter count on. A PID's counter
+// counts the packets that carry something.
 func (s *splicer) countOn(packet []byte, pid int) {
 	turn, turning := s.turned[pid]
 	if !turning {

@@ -104,8 +104,7 @@ func (r *Remuxer) Copy(ctx context.Context, w io.Writer, s Stream) error {
 	return r.single(ctx, w, relay, local, "-live_start_index", strconv.Itoa(-headStart))
 }
 
-// single remuxes a stream that has no qualities to choose from: one ffmpeg
-// reads all of it through the relay's twins, with options for how it reads.
+// single remuxes a stream that has no qualities to choose from.
 func (r *Remuxer) single(ctx context.Context, w io.Writer, relay *relay, local string, options ...string) error {
 	out := newReserve(w, relay.short.Load)
 	cmd := r.command(ctx, local, options...)
@@ -171,7 +170,6 @@ func (r *Remuxer) play(ctx context.Context, w io.Writer, s Stream, relay *relay,
 	}
 }
 
-// launch starts the ffmpeg that reads a leg from input.
 func (r *Remuxer) launch(ctx context.Context, l *leg, input string) error {
 	ctx, stop := context.WithCancel(ctx)
 	// The stage has each leg begin with its first segment.

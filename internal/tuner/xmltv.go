@@ -142,9 +142,8 @@ func (t *Tuner) keepFresh(ctx context.Context) {
 	}
 }
 
-// refreshGuide fetches the guide, unless one fresh enough is at hand: fetched
-// meanwhile, by a request or an earlier pass. It returns how long the guide
-// stays fresh, which is when the next fetch is due.
+// refreshGuide fetches the guide unless one is still fresh, fetched meanwhile
+// by a request or an earlier pass. It returns how long until the next fetch.
 func (t *Tuner) refreshGuide(ctx context.Context) (time.Duration, error) {
 	select {
 	case t.fetching <- struct{}{}:

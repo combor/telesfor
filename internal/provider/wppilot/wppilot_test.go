@@ -643,8 +643,8 @@ func TestStream(t *testing.T) {
 
 func TestStreamRefused(t *testing.T) {
 	tests := []struct {
-		refusal string // WP's name for it
-		want    string // what the error must mention
+		refusal string
+		want    string
 	}{
 		{"user_outside_eu", "-wppilot-proxy"},
 		{"user_not_verified_eu", "-wppilot-proxy"},
@@ -678,8 +678,6 @@ func TestStreamRefused(t *testing.T) {
 	}
 }
 
-// TestStreamExpiresTheSignIn checks that a stream WP refuses to a session it
-// no longer knows expires the sign-in.
 func TestStreamExpiresTheSignIn(t *testing.T) {
 	f, p := signedIn(t)
 	f.set(func() { f.revoked = true })

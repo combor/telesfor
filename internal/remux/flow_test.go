@@ -36,8 +36,6 @@ func TestProbeBeforeFiveCompleteBuckets(t *testing.T) {
 	}
 }
 
-// A segment's speed is that of the picture and the sound together, which
-// share the connection, and a connection that has stalled has none.
 func TestProbeCountsBothTracks(t *testing.T) {
 	start := time.Unix(100, 0)
 	f := &flow{}
@@ -68,8 +66,6 @@ func TestProbeCountsBothTracks(t *testing.T) {
 	}
 }
 
-// A tenth of a second that began before a segment did is not counted in its
-// speed.
 func TestProbePartialFirstBucket(t *testing.T) {
 	start := time.Unix(1000, 0)
 	f := &flow{}

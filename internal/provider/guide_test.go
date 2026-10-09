@@ -8,13 +8,10 @@ import (
 	"time"
 )
 
-// clock returns the time hours and minutes after midnight on Monday the 5th
-// of October 2026, in UTC.
 func clock(hours, minutes int) time.Time {
 	return time.Date(2026, 10, 5, hours, minutes, 0, 0, time.UTC)
 }
 
-// shown writes programmes out a line each: whose, when, and what.
 func shown(programmes []Programme) []string {
 	var lines []string
 	for _, programme := range programmes {
@@ -32,7 +29,7 @@ func TestFill(t *testing.T) {
 	known := []Programme{
 		{ChannelID: "one", Title: "News", Start: clock(9, 0), Stop: clock(10, 15)}, // on since before from
 		{ChannelID: "one", Title: "Film", Start: clock(11, 40), Stop: clock(13, 10)},
-		{ChannelID: "one", Title: "Short", Start: clock(13, 0), Stop: clock(13, 30)}, // starts before the film ends
+		{ChannelID: "one", Title: "Short", Start: clock(13, 0), Stop: clock(13, 30)}, // overlaps the film
 		{ChannelID: "one", Title: "Night", Start: clock(15, 0), Stop: clock(17, 0)},  // on until after to
 	}
 	tests := []struct {

@@ -581,8 +581,8 @@ func (p *Provider) send(ctx context.Context, signedIn *account, method, address 
 	return got, sent, nil
 }
 
-// agent sends the requests of the provider's HTTP client. It names the
-// browser in every one, to WP's API and to its stream servers alike.
+// agent names the browser in every request, to WP's API and its stream
+// servers alike.
 func agent(req *http.Request, next http.RoundTripper) (*http.Response, error) {
 	out := req.Clone(req.Context())
 	out.Header.Set("User-Agent", browser)

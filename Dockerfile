@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# Keep the Go version in sync with go.mod.
+# Keep in sync with go.mod.
 FROM --platform=$BUILDPLATFORM golang:1.27.1-trixie@sha256:433790e515d27dc6003e847e644cc0af956985cf315c1c58a3b73ee2dd305183 AS build
 
 WORKDIR /src
@@ -16,7 +16,6 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o /telesfor ./cmd/telesfor
 
-# Alpine supplies ffmpeg and its runtime dependencies.
 FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 # /data keeps the sign-ins to providers. Mount a volume there to keep them

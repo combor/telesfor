@@ -58,8 +58,7 @@ func (f fake) Stream(context.Context, string) (provider.Source, error) {
 // device is the tuner's in most tests: at the root, numbered from 1.
 var device = Device{ID: "0BADCAFE", Name: "Fake", First: 1}
 
-// newTuner returns a tuner of device that offers the channels of p. It has no
-// remuxer, so a request that gets as far as streaming panics.
+// newTuner returns a tuner of device for p. It has no remuxer: streaming panics.
 func newTuner(t *testing.T, p provider.Provider) *Tuner {
 	t.Helper()
 	tuner, err := New(t.Context(), p, nil, device)
@@ -69,7 +68,6 @@ func newTuner(t *testing.T, p provider.Provider) *Tuner {
 	return tuner
 }
 
-// ask sends h a request for a path, as Plex at plex.local:5004 does.
 func ask(h http.Handler, method, path string) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	h.ServeHTTP(recorder, httptest.NewRequest(method, "http://plex.local:5004"+path, nil))
@@ -82,7 +80,6 @@ func get(t *testing.T, path string) *httptest.ResponseRecorder {
 	return ask(newTuner(t, fake{}), http.MethodGet, path)
 }
 
-// guideOf reads the XMLTV guide a tuner answered with.
 func guideOf(t *testing.T, response *httptest.ResponseRecorder) xmlTV {
 	t.Helper()
 	var guide xmlTV
@@ -303,7 +300,7 @@ func (c *counting) Programmes(ctx context.Context, channels []provider.Channel, 
 	return c.fake.Programmes(ctx, channels, from, to)
 }
 
-// newCounting returns a counting provider with room for every fetch a test makes.
+// fetched has room for every fetch a test makes.
 func newCounting() *counting { return &counting{fetched: make(chan struct{}, 8)} }
 
 // askGuide asks a tuner for its guide.

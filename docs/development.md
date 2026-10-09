@@ -32,7 +32,7 @@ flowchart LR
 
 | Package | Job |
 |---|---|
-| `internal/provider` | The contract every TV source implements, and helpers they share. |
+| `internal/provider` | The contract every TV source implements, and shared helpers. |
 | `internal/provider/tvp` | TVP channels, guide and stream URLs. |
 | `internal/provider/globo` | Globoplay's sign-in, channels, guide and stream URLs. |
 | `internal/provider/ebc` | EBC's channels and streams, and TV Brasil's guide. |
@@ -40,8 +40,8 @@ flowchart LR
 | `internal/provider/francetv` | France Télévisions' channels, guide and stream URLs. |
 | `internal/provider/tf1` | TF1+'s sign-in, channels, guide and stream URLs. |
 | `internal/provider/wppilot` | WP Pilot's sign-in, channels, guide and stream sessions. |
-| `internal/provider/providertest` | What the tests of providers share. Only tests import it. |
-| `internal/httpclient` | Keeps a stream's segments on HTTP/1.1 connections of their own, apart from a provider's other traffic. |
+| `internal/provider/providertest` | Shared helpers for provider tests. |
+| `internal/httpclient` | Separate HTTP/1.1 connections for a stream's segments. |
 | `internal/store` | The bbolt database that keeps sign-ins across restarts. |
 | `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy, startup alignment and the choice of quality. |
 | `internal/slowproxy` | A throttling proxy for trying telesfor on a slow connection. Not in the binary. |
@@ -173,46 +173,35 @@ type Provider interface {
 ```
 
 Each stream returns a `Source` with its URL and the HTTP client used to fetch
-it. A client whose requests need changing, to name a browser or to carry a
-pass, wraps the provider's transport with `httpclient.Wrap`, so that its
-segments keep their own connections. A stream whose addresses carry a pass
-that runs out keeps it good with `provider.Pass`.
+it. A client that changes requests wraps the provider's transport with
+`httpclient.Wrap`, so segments keep their own connections. `provider.Pass`
+renews an expiring pass in a stream's addresses.
 
-Package `provider` has the helpers that providers share. A guide with gaps
-fills them with `provider.Fill`, which puts in the channel's name an hour at a
-time: Plex offers a channel by what is on it, so a gap would leave nothing to
-pick. A guide that gives only start times ends its programmes with
-`provider.UntilNext`.
+`provider.Fill` fills gaps in a guide, and `provider.UntilNext` ends programmes
+that have only start times.
 
-A provider names itself once in its errors: its helpers leave the name out,
-and each exported method puts it in front, as in `tvp: listing channels: …`.
+Only exported methods prefix errors with the provider's name, as in
+`tvp: listing channels: …`.
 
-Then add a row for it to `sources` in `cmd/telesfor/main.go`. The row has a
-key, which names the `-<key>-proxy` flag and `TELESFOR_<KEY>_PROXY`, and says
-for `-help` what the provider is and why it may want a proxy. `proxied` opens
-the provider with its proxy, or `stored` with the store as well, for one that
-keeps a sign-in. The row's tuner has a device ID, a path and a range of
-channel numbers of its own, which Plex knows it by, so they stay as they are.
-It also says how many streams the provider plays at once, if fewer than four.
+Then add a row to `sources` in `cmd/telesfor/main.go`: a key, which names
+`-<key>-proxy` and `TELESFOR_<KEY>_PROXY`; text for `-help`; `proxied(New)`,
+or `stored(New)` for a provider with a sign-in; and a tuner with a device ID,
+path and channel range of its own, and how many streams it plays at once if
+fewer than four.
 
-The tuner comes with a tab on the settings page, which shows its proxy. A
-provider that implements `provider.Account` also has its sign-in there, by a
-code the user enters on the provider's own site. It keeps the account across
-restarts with `store.Get`, `store.Put` and `store.Delete`, in a bucket named
-for it.
+Implementing `provider.Account` adds a sign-in to the provider's tab of the
+settings page. Keep the account with `store.Get`, `store.Put` and
+`store.Delete`.
 
-Beyond its package and `main.go`, a provider is written up by hand in:
+Also update:
 
-- `README.md`: a line of *What you get*, the region note if it needs a
-  connection in its own country, and a row of the *Connect Plex* table.
-- `docs/usage.md`: a *Configuration* row for its proxy, and a section of its
-  own. With a sign-in, also the *Web interface* sentence on signing in and a
-  *Troubleshooting* row.
-- This page: a row of the package table, and with a sign-in, how to run its
-  live test.
-- `packaging/linux/telesfor.env`: its proxy, commented out, with the others
-  of its country.
-- Its package: a `TestLive`, which CI runs daily with the others.
+- `README.md`: *What you get*, the region note if it is geo-blocked, and
+  *Connect Plex*.
+- `docs/usage.md`: *Configuration*, a section of its own, and with a sign-in,
+  *Web interface* and *Troubleshooting*.
+- This page: the package table, and with a sign-in, its live test.
+- `packaging/linux/telesfor.env`: its proxy, commented out.
+- A `TestLive` in its package.
 
 ## Tests
 
@@ -242,16 +231,15 @@ go run ./internal/slowproxy -rate 20M
 curl 'http://127.0.0.1:8899/rate?to=3M'
 ```
 
-The tests use recorded responses. To check the providers against their real
-APIs, sites and streams, which CI does daily:
+The tests use recorded responses. To check the providers against the real
+services, as CI does daily:
 
 ```sh
 TELESFOR_LIVE=1 go test -count=1 -v -run TestLive ./internal/provider/...
 ```
 
-For TF1+, that checks only its guide and LCI, which are open to anyone.
-Globoplay's and WP Pilot's tests skip themselves without `TELESFOR_DATA`, as
-they do in CI.
+Without `TELESFOR_DATA`, TF1+'s test checks only its guide and LCI, and
+Globoplay's and WP Pilot's skip.
 
 Globoplay's needs a telesfor that has signed in, stopped for the test, and a
 Brazilian connection:
@@ -276,7 +264,7 @@ TELESFOR_LIVE=1 TELESFOR_DATA=<data directory> TELESFOR_WPPILOT_PROXY='http://<p
   go test -count=1 -v -run TestLive ./internal/provider/wppilot
 ```
 
-Each of these holds the data directory to itself, so run them one at a time.
+Run these one at a time: each locks the data directory.
 
 To test the container image, which CI also does on every push:
 
@@ -298,5 +286,5 @@ TELESFOR_SMOKE_DIST=$PWD/dist go test -count=1 -timeout 20m -run TestPackageServ
 Push a tag that starts with `v`, such as `v0.1.0`. Once the checks pass, CI
 builds the archives and packages with GoReleaser and publishes them as a
 GitHub release, to the AUR and to the Homebrew, Scoop and Nix repositories.
-Beside the release, it pushes the container image to
-`ghcr.io/combor/telesfor`, which stays published if the release fails.
+It also pushes the container image to `ghcr.io/combor/telesfor`, even if the
+release fails.

@@ -254,9 +254,7 @@ func passOf(address string) (pass, stream string) {
 	return "/" + first, at.Host + "/" + file
 }
 
-// session sends the requests of a stream's HTTP client, which the stream is
-// read through, and keeps the stream's pass good: see provider.Pass. TF1's
-// lasts four hours.
+// session keeps a stream's pass good. TF1's lasts four hours.
 type session struct{ *provider.Pass }
 
 func (s session) roundTrip(req *http.Request, next http.RoundTripper) (*http.Response, error) {

@@ -60,9 +60,7 @@ func TestLive(t *testing.T) {
 		with := 0 // channels that WP lists programmes of
 		for _, channel := range channels {
 			count, listed, pictures := 0, 0, 0
-			// Not providertest.Covered: WP may list a programme within
-			// another, so the guide is covered up to the latest stop so
-			// far rather than to the stop of the programme before.
+			// Not providertest.Covered: WP may list a programme within another.
 			covered := from // the guide has no gap up to here
 			for _, programme := range programmes {
 				if programme.ChannelID != channel.ID {

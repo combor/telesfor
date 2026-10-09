@@ -19,7 +19,7 @@ type leg struct {
 	video, sound track
 
 	flying context.Context    // done once the segments on their way are given up
-	drop   context.CancelFunc // gives up the segments on their way: ends flying
+	drop   context.CancelFunc // ends flying
 	stop   context.CancelFunc // stops its ffmpeg
 	out    io.Reader          // what its ffmpeg writes
 	wait   func() error       // waits for its ffmpeg to end, as often as it is asked
@@ -35,7 +35,6 @@ type track struct {
 	started int64    // the latest it has begun to get
 }
 
-// track returns the picture of the leg, or its sound.
 func (l *leg) track(video bool) *track {
 	if video {
 		return &l.video
@@ -43,19 +42,14 @@ func (l *leg) track(video bool) *track {
 	return &l.sound
 }
 
-// placed tells whether it is known where in its playlist the leg begins.
 func (t *track) placed() bool { return t.from >= 0 }
 
-// within tells whether a segment comes before the end of the leg, if it has
-// one.
 func (t *track) within(seq int64) bool { return t.until < 0 || seq < t.until }
 
-// complete tells whether the playlist lists all that the leg has: the leg
-// ends, and the playlist gets as far.
+// complete tells whether the playlist lists the whole leg.
 func (t *track) complete() bool { return t.until >= 0 && t.list.next() >= t.until }
 
-// listFrom is where the playlist that ffmpeg is given begins: at the segment
-// before the latest of the leg's that it has asked for. ffmpeg asks for a
+// listFrom is where the playlist ffmpeg is given begins. ffmpeg asks for a
 // segment while it still reads the one before, and skips what it reads if the
 // playlist no longer lists it.
 func (t *track) listFrom() int64 {
@@ -155,13 +149,13 @@ func (s *stage) change(l *leg, to int, why string) {
 
 // after returns the leg that follows one whose ffmpeg has ended, or nil if
 // the stream ends with it: because it is over, because an ffmpeg did not
-// start, or for whatever the leg's own ffmpeg ended with, ended. Its error is
-// why, and nil if the stream is over. A leg that wrote nothing and has no
-// other to follow it failed: the stream then goes on from where it was, in
-// the quality it had. If it had none, it starts in the best, as it does when
-// nothing is known of the connection.
+// start, or for whatever the leg's own ffmpeg ended for. The error is nil if
+// the stream is over. A leg that wrote nothing and has no other to follow it
+// failed: the stream then goes on from where it was, in the quality it had.
+// If it had none, it starts in the best, as it does when nothing is known of
+// the connection.
 func (s *stage) after(l *leg, wrote bool, ended error) (*leg, error) {
-	var failed error // why the ffmpeg of the leg to follow did not start
+	var failed error
 	for {
 		s.mu.Lock()
 		next, over := s.pending, s.over
@@ -190,10 +184,8 @@ func (s *stage) after(l *leg, wrote bool, ended error) (*leg, error) {
 	}
 }
 
-// standIn starts a leg in place of l, which wrote nothing and has none to
-// follow it: in the quality of the leg before, from where that ended, or in
-// the best if l was the first. It starts none for a leg that stands in itself,
-// or where that is what failed. The caller holds the lock.
+// standIn starts a leg in place of l, which wrote nothing: see after. It
+// starts none that would repeat what failed. The caller holds the lock.
 func (s *stage) standIn(l *leg) *leg {
 	best := len(s.ladder.qualities) - 1
 	if l.standsIn || (l.before == nil && l.quality == best) {

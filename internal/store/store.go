@@ -67,8 +67,8 @@ func checkVersion(tx *bolt.Tx) error {
 	return nil
 }
 
-// Get decodes what is kept under key in owner's bucket, as JSON, into v. It
-// reports whether anything is kept there: a nil db keeps nothing.
+// Get decodes the JSON under key in owner's bucket into v. It reports whether
+// there was any.
 func Get(db *bolt.DB, owner, key string, v any) (bool, error) {
 	if db == nil {
 		return false, nil
@@ -92,7 +92,7 @@ func Get(db *bolt.DB, owner, key string, v any) (bool, error) {
 	return found, nil
 }
 
-// Put keeps v under key in owner's bucket, as JSON. A nil db keeps nothing.
+// Put stores v as JSON under key in owner's bucket.
 func Put(db *bolt.DB, owner, key string, v any) error {
 	if db == nil {
 		return nil
@@ -114,7 +114,7 @@ func Put(db *bolt.DB, owner, key string, v any) error {
 	return nil
 }
 
-// Delete removes what is kept under key in owner's bucket, if anything is.
+// Delete removes key from owner's bucket.
 func Delete(db *bolt.DB, owner, key string) error {
 	if db == nil {
 		return nil

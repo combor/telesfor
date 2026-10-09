@@ -13,7 +13,7 @@ jobs:
   live:
     name: Providers' channels, guides and streams
     runs-on: ubuntu-latest
-    # Five minutes a provider, and the runner tests four at a time.
+    # Five minutes a provider, four at a time.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -21,8 +21,6 @@ jobs:
         with:
           go-version-file: 'go.mod'
           cache: false
-      # Each TestLive skips what CI cannot check: Globoplay's and WP Pilot's
-      # need a telesfor that has signed in, which CI has not.
       - run: go test -count=1 -timeout 5m -v -run TestLive ./internal/provider/...
         env:
           TELESFOR_LIVE: 1

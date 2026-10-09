@@ -449,7 +449,7 @@ func TestStreamRefused(t *testing.T) {
 	tests := []struct {
 		name string
 		set  func(*tf1)
-		want string // what the error must mention
+		want string
 	}{
 		{"abroad", func(f *tf1) { f.refusal = "GEOBLOCKED" }, "-tf1-proxy"},
 		{"no access", func(f *tf1) { f.refusal = "PERMISSION_DENIED" }, "no access to TFX"},

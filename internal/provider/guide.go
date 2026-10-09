@@ -12,10 +12,8 @@ const block = time.Hour
 
 // Fill returns the programmes of a channel with a placeholder wherever there
 // is none between from and to: the channel's name, an hour at a time by the
-// clock, described as unlisted. Plex offers a channel by what is on it, so a
-// channel with nothing on has nothing to pick there.
-//
-// The known programmes are in the order they start.
+// clock. Plex offers a channel by what is on it, so a channel with nothing on
+// has nothing to pick there. known must be sorted by start.
 func Fill(ch Channel, known []Programme, from, to time.Time, unlisted string) []Programme {
 	var programmes []Programme
 	at := from
@@ -42,11 +40,8 @@ func Fill(ch Channel, known []Programme, from, to time.Time, unlisted string) []
 	return programmes
 }
 
-// UntilNext ends each programme of a guide that gives only their starts where
-// the next one starts, and keeps those on between from and to, as the
-// channel's. A day or more until the next is a day the guide lacks, and one
-// without a title is time with nothing listed: neither is kept, and nor is
-// the last, which has no next.
+// UntilNext ends each programme where the next starts, for a guide that lists
+// only starts. A day or more until the next is a day the guide lacks.
 func UntilNext(channelID string, listed []Programme, from, to time.Time) []Programme {
 	var programmes []Programme
 	for i := 0; i < len(listed)-1; i++ {
@@ -60,7 +55,6 @@ func UntilNext(channelID string, listed []Programme, from, to time.Time) []Progr
 	return programmes
 }
 
-// tag is an HTML tag.
 var tag = regexp.MustCompile(`<[^>]*>`)
 
 // PlainText returns the words of a piece of HTML, a paragraph to a line.

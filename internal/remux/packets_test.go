@@ -91,10 +91,9 @@ func frameStart(pts, dts int64) []byte {
 	return p
 }
 
-// tvpSegment builds a segment the way TVP's packager does: a keyframe
-// without a DTS, and then frames that are stored in the order P B B and
-// shown in the order B B P. The decoding times come late by the given
-// amount: at 0, each B-frame is decoded just as it is shown.
+// tvpSegment builds a segment as TVP's packager does: a keyframe without a
+// DTS, then frames stored P B B and shown B B P. At late 0, each B-frame is
+// decoded as it is shown.
 func tvpSegment(start, late int64) []byte {
 	s := bytes.Join([][]byte{pat, pmt, frameStart(start, -1), more, aud1}, nil)
 	for i := range int64(3) {
@@ -109,9 +108,8 @@ func tvpSegment(start, late int64) []byte {
 	return s
 }
 
-// checkContinuity checks that the continuity counter of every PID counts on
-// from one packet with a payload to the next, as MPEG-TS has it, and reports
-// the first that does not.
+// checkContinuity checks that each PID's continuity counter counts up on
+// every packet with a payload.
 func checkContinuity(t *testing.T, stream []byte) {
 	t.Helper()
 	counters := map[int]byte{}

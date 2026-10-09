@@ -431,8 +431,6 @@ func TestStream(t *testing.T) {
 	}
 }
 
-// The segments go over the segment pool, where a pass that has run out is
-// renewed as well, and the segment is asked for again with its range.
 func TestStreamOverTheSegmentPool(t *testing.T) {
 	f, p := serve(t)
 	source, err := p.Stream(t.Context(), "france-2")
@@ -457,9 +455,8 @@ func TestStreamOverTheSegmentPool(t *testing.T) {
 	}
 }
 
-// A stream that is handed out as the playlist of its one quality is that
-// playlist as it stands when asked for: ffmpeg reads it anew as the stream
-// goes on.
+// A stream of one quality is its playlist as it stands: ffmpeg reads it anew
+// as the stream goes on.
 func TestStreamOfOneQuality(t *testing.T) {
 	f, p := serve(t)
 	f.index = head + segment

@@ -85,9 +85,9 @@ func (f *flow) fastest(from, to time.Time) (float64, bool) {
 type counted struct {
 	io.ReadCloser
 	flow  *flow
-	own   *flow     // how fast it alone comes, for a segment of the picture that is watched
-	asked time.Time // when it was asked for
-	of    int64     // how much of it there is, in bytes: its Content-Length
+	own   *flow // of this body alone, if it is watched
+	asked time.Time
+	of    int64 // its Content-Length
 
 	mu    sync.Mutex
 	got   int64
@@ -117,12 +117,9 @@ func (c *counted) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// coming tells how the body is coming, as the controller is told: how much
-// of how much has come, not counting what came at once with the first of it,
-// and how fast the whole stream and the body alone have been coming of late.
-// Until a half second of it has been timed in full, each speed is that of
-// what came after the first of it, over the time since. A half second timed
-// in full in which nothing came is a stall: no speed at all.
+// coming tells how the body is coming. Until a half second of it has been
+// timed in full, each speed is that of what came after the first of it. A
+// half second timed in full in which nothing came is a stall.
 func (c *counted) coming(now time.Time) coming {
 	c.mu.Lock()
 	defer c.mu.Unlock()

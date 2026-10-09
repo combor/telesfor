@@ -177,8 +177,6 @@ func TestSegmentPoolReuse(t *testing.T) {
 	}
 }
 
-// A wrapper's handling holds for segments, which still go over HTTP/1.1, and
-// for the rest, which keep HTTP/2.
 func TestWrap(t *testing.T) {
 	origin := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Header.Get("X-Test-Auth") != "present" {

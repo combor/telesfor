@@ -23,8 +23,7 @@ func serve(t *testing.T, handler http.HandlerFunc) *Provider {
 	return &Provider{api: server.URL, client: server.Client()}
 }
 
-// refusing starts a router of TVP's that turns every address away, as it
-// does those of VPNs.
+// refusing starts a TVP router that turns every address away, as it does VPNs.
 func refusing(t *testing.T) *httptest.Server {
 	t.Helper()
 	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -162,9 +162,8 @@ func (t *Tuner) Name() string { return t.device.Name }
 // Provider is where the tuner's channels come from.
 func (t *Tuner) Provider() provider.Provider { return t.provider }
 
-// Address is where the tuner is on a host, which may come with a port. Given
-// the host a client reached it at, it makes URLs that work from wherever the
-// client is.
+// Address is where the tuner is on a host, which may come with a port. Use
+// the host a client reached, so its URLs work from wherever the client is.
 func (t *Tuner) Address(host string) string { return "http://" + host + t.device.Path }
 
 // Station is a channel of the lineup, and how many streams of it are open.

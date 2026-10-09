@@ -23,9 +23,7 @@ func Await(t *testing.T, p provider.Account, want provider.LoginState) provider.
 	return provider.Login{}
 }
 
-// Covered checks that a channel's programmes in a guide run from from to to
-// with no gap, each with a title and a start before its stop, and returns
-// them. Each must start by the stop of the one before it.
+// Covered returns a channel's programmes, checking that they cover from to to.
 func Covered(t *testing.T, guide []provider.Programme, channel provider.Channel, from, to time.Time) []provider.Programme {
 	t.Helper()
 	var programmes []provider.Programme

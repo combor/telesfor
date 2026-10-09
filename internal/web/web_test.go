@@ -107,7 +107,7 @@ func get(t *testing.T, server *httptest.Server, path string, header ...string) r
 	return request(t, server, http.MethodGet, path, header...)
 }
 
-// post posts to a path the way get fetches it.
+// post posts the way get fetches.
 func post(t *testing.T, server *httptest.Server, path string, header ...string) response {
 	t.Helper()
 	return request(t, server, http.MethodPost, path, header...)

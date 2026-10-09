@@ -30,9 +30,9 @@ func tabPath(p provider.Provider) string { return "/ui/providers/" + p.Name() }
 type frame struct {
 	Version string
 	Tabs    []tab
-	Title   string // the page's, after the current tab
-	Path    string // the current tab's, which the page refreshes from
-	OnAir   bool   // whether a stream of any provider is open
+	Title   string
+	Path    string // the URL the page refreshes from
+	OnAir   bool
 }
 
 // tab leads to a provider's part of the page, or to the server's.

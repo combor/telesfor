@@ -36,18 +36,16 @@ import (
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
-// A source is a TV provider telesfor offers, with a tuner of its own and a
-// proxy flag, which its tab of the settings page shows.
 type source struct {
-	key    string // names its -<key>-proxy flag and TELESFOR_<KEY>_PROXY
-	about  string // the provider, and why it may want a proxy, for -help
+	key    string
+	about  string
 	open   func(proxy string, db *bolt.DB) (provider.Provider, error)
 	device tuner.Device
 }
 
-// Every TV source plugs in here. A tuner's ID, path and numbers are how Plex
-// knows it, so each row gives its own and they stay as they are. TVP's tuner
-// is at the root, where Plex has known it since it was the only one.
+// Every TV source plugs in here. Plex knows a tuner by its ID, path and
+// numbers, so never change them. TVP's tuner is at the root, where Plex has
+// known it since it was the only one.
 var sources = []source{
 	{"tvp", "TVP, which blocks most channels outside Poland", proxied(tvp.New),
 		tuner.Device{ID: "7E1E5F04", Name: "TVP", First: 1}},
@@ -103,8 +101,7 @@ func main() {
 	}
 }
 
-// run puts telesfor on the air. proxies holds the proxy of each source, in the
-// order of sources.
+// run puts telesfor on the air, with proxies[i] for sources[i].
 func run(listen, data string, debug bool, proxies []string) error {
 	if data == "" {
 		return errors.New("no home directory to keep sign-ins in: set -data")
@@ -115,8 +112,7 @@ func run(listen, data string, debug bool, proxies []string) error {
 	}
 	defer db.Close()
 
-	// Every provider is opened before any tuner asks the network for its
-	// channels, so that a bad proxy is reported at once.
+	// Opened before any tuner fetches channels, so a bad proxy fails fast.
 	providers := make([]provider.Provider, len(sources))
 	for i, s := range sources {
 		if providers[i], err = s.open(proxies[i], db); err != nil {
@@ -169,10 +165,8 @@ func settings(listen, data string, debug bool) []web.Setting {
 	}
 }
 
-// flag is the name of the source's proxy flag.
 func (s source) flag() string { return s.key + "-proxy" }
 
-// env is the environment variable that sets the source's proxy.
 func (s source) env() string { return "TELESFOR_" + strings.ToUpper(s.key) + "_PROXY" }
 
 // proxySetting is the source's proxy, for its tab of the settings page.

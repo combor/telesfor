@@ -29,7 +29,6 @@ var (
 	serverPage   = page("templates/server.html")
 )
 
-// page is the layout with a tab's own part.
 func page(name string) *template.Template {
 	return template.Must(template.Must(layout.Clone()).ParseFS(files, name))
 }

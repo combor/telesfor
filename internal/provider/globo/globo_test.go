@@ -366,7 +366,7 @@ func TestStreamRefused(t *testing.T) {
 	tests := []struct {
 		name string
 		set  func(*globo)
-		want string // what the error must mention
+		want string
 	}{
 		{"abroad", func(g *globo) { g.refusal = "403 geo-block" }, "blocked outside Brazil"},
 		{"fenced in", func(g *globo) { g.refusal = "404 geo-fencing" }, "blocked outside Brazil"},
@@ -395,9 +395,6 @@ func TestStreamRefused(t *testing.T) {
 	}
 }
 
-// TestStreamExpiresTheSignIn checks that a stream Globo refuses for want of
-// a login expires the sign-in, unless another account has taken its place
-// since.
 func TestStreamExpiresTheSignIn(t *testing.T) {
 	g, p := signedIn(t)
 	g.refusal = "401 login-required"

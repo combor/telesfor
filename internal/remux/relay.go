@@ -135,8 +135,7 @@ func (r *relay) qualities(ctx context.Context, manifest string) *ladder {
 	return nil
 }
 
-// keptAt returns the kept manifest if it was found at an address, and keeps it
-// no longer: ffmpeg asks for it once.
+// keptAt returns the kept manifest, once, if it is for address.
 func (r *relay) keptAt(address string) *kept {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -162,8 +161,7 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 		return
 	}
 
-	// Whatever upstream answers is passed on as it is, a refusal included: the
-	// twin stands in for the server.
+	// A refusal is passed on as it is: the twin stands in for the server.
 	fetch, err := http.NewRequestWithContext(req.Context(), http.MethodGet, address, nil)
 	if err != nil {
 		http.Error(w, "bad upstream URL", http.StatusBadGateway)
@@ -223,9 +221,8 @@ type refusal int
 
 func (r refusal) Error() string { return strconv.Itoa(int(r)) + " " + http.StatusText(int(r)) }
 
-// ask asks upstream for a file, or the part of it that byteRange names if that
-// is not "". An answer of 400 or over is a refusal. Its errors leave out the
-// URL, which may carry the stream's token.
+// ask fetches address, or byteRange of it. Its errors leave out the URL,
+// which may carry the stream's token.
 func ask(ctx context.Context, client *http.Client, address, byteRange string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {

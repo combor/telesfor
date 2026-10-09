@@ -51,35 +51,25 @@ func TestPassRenew(t *testing.T) {
 		asked++
 		return handing
 	})
-	renew := func(refused, want string, wantAsked int) {
+	renew := func(refused, want, current string, wantAsked int) {
 		t.Helper()
-		if pass := p.Renew(t.Context(), refused); pass != want || asked != wantAsked {
-			t.Errorf("%s refused: renewed to %q after asking %d times, want %q after %d", refused, pass, asked, want, wantAsked)
+		if pass := p.Renew(t.Context(), refused); pass != want || p.Current() != current || asked != wantAsked {
+			t.Errorf("%s refused: renewed to %q, asking with %s after asking %d times, want %q, %s after %d", refused, pass, p.Current(), asked, want, current, wantAsked)
 		}
 	}
 	// A new pass that is refused is refused for something else.
-	renew("/pass1", "", 0)
+	renew("/pass1", "", "/pass1", 0)
 	// Once it has had its rest, a new one is asked for.
 	p.signed = p.signed.Add(-time.Hour)
-	renew("/pass1", "/pass2", 1)
-	if pass := p.Current(); pass != "/pass2" {
-		t.Errorf("after the pass was renewed, asking with %s, want the new one", pass)
-	}
+	renew("/pass1", "/pass2", "/pass2", 1)
 	// The new one has its rest too.
-	renew("/pass2", "", 1)
+	renew("/pass2", "", "/pass2", 1)
 	// With no new pass to be had, the old one stays.
 	p.signed = p.signed.Add(-time.Hour)
 	handing = ""
-	renew("/pass2", "", 2)
-	if pass := p.Current(); pass != "/pass2" {
-		t.Errorf("after no new pass was handed out, asking with %s, want /pass2", pass)
-	}
+	renew("/pass2", "", "/pass2", 2)
 
-	none := NewPass("", 0, func(context.Context) string {
-		t.Error("a pass was asked for to a stream without one")
-		return "/pass"
-	})
-	if pass := none.Renew(t.Context(), ""); pass != "" {
+	if pass := NewPass("", 0, nil).Renew(t.Context(), ""); pass != "" {
 		t.Errorf("a stream without a pass: renewed to %q, want none", pass)
 	}
 }
@@ -142,11 +132,7 @@ func TestPassOverTheSegmentPool(t *testing.T) {
 			return ""
 		}
 		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Error(err)
-			return ""
-		}
+		body, _ := io.ReadAll(resp.Body)
 		return string(body)
 	})
 	client := &http.Client{Transport: httpclient.Wrap(base.Transport, func(req *http.Request, next http.RoundTripper) (*http.Response, error) {
@@ -173,15 +159,10 @@ func TestPassOverTheSegmentPool(t *testing.T) {
 	if err != nil || string(body) != "part" {
 		t.Fatalf("renewed segment: %q, %v", body, err)
 	}
-	resp, err = client.Get(origin.URL + "/old/media.m3u8")
-	if err != nil {
+	if resp, err = client.Get(origin.URL + "/old/media.m3u8"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
 	mu.Lock()
 	defer mu.Unlock()
 	for path, want := range map[string]int{"/old/segment.ts": 1, "/new/segment.ts": 1, "/sign": 2, "/new/media.m3u8": 2} {

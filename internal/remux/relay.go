@@ -135,24 +135,20 @@ func (r *relay) qualities(ctx context.Context, manifest string) *ladder {
 	return nil
 }
 
-// keptAt returns the kept manifest, once, if it is for address.
-func (r *relay) keptAt(address string) *kept {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	kept := r.kept
-	if kept == nil || kept.address != address {
-		return nil
-	}
-	r.kept = nil
-	return kept
-}
-
 // fetch answers a request to a twin with the same path fetched from server.
 func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 	began := time.Now()
 	name := file(req.URL) // for the log: the rest of the path may carry the stream's token
 	address := server + req.URL.RequestURI()
-	if kept := r.keptAt(address); kept != nil {
+	r.mu.Lock()
+	kept := r.kept
+	if kept != nil && kept.address == address {
+		r.kept = nil
+	} else {
+		kept = nil
+	}
+	r.mu.Unlock()
+	if kept != nil {
 		if kept.kind != "" {
 			w.Header().Set("Content-Type", kept.kind)
 		}

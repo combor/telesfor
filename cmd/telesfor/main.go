@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -66,14 +67,14 @@ var sources = []source{
 }
 
 func main() {
-	listen := flag.String("listen", envOr("TELESFOR_LISTEN", ":5004"),
+	listen := flag.String("listen", cmp.Or(os.Getenv("TELESFOR_LISTEN"), ":5004"),
 		"address to listen on (env TELESFOR_LISTEN)")
 	proxies := make([]string, len(sources))
 	for i, s := range sources {
 		flag.StringVar(&proxies[i], s.flag(), os.Getenv(s.env()),
 			"HTTP proxy for "+s.about+" (env "+s.env()+")")
 	}
-	data := flag.String("data", dataDir(),
+	data := flag.String("data", cmp.Or(os.Getenv("TELESFOR_DATA"), dataDir()),
 		"directory to keep sign-ins in (env TELESFOR_DATA)")
 	debug := flag.Bool("debug", os.Getenv("TELESFOR_DEBUG") != "",
 		"also log every request, every upstream fetch and ffmpeg's warnings (env TELESFOR_DEBUG)")
@@ -148,9 +149,6 @@ func run(listen, data string, debug bool, proxies []string) error {
 // dataDir is where telesfor keeps its data unless told otherwise, or empty for
 // an account without a home.
 func dataDir() string {
-	if dir := os.Getenv("TELESFOR_DATA"); dir != "" {
-		return dir
-	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return ""
@@ -231,11 +229,4 @@ func healthURL(listen string) (string, error) {
 		host = "::1"
 	}
 	return (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: "/lineup_status.json"}).String(), nil
-}
-
-func envOr(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
 }

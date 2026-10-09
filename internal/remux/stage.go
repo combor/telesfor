@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-const playlistType = "application/vnd.apple.mpegurl"
-
 // stage plays a stream that comes in more than one quality to ffmpeg, one
 // quality at a time.
 //
@@ -109,7 +107,7 @@ func (s *stage) master(w http.ResponseWriter, req *http.Request) {
 		http.NotFound(w, req)
 		return
 	}
-	w.Header().Set("Content-Type", playlistType)
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	fmt.Fprintf(w, "#EXTM3U\n"+
 		"#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"sound\",NAME=\"sound\",DEFAULT=YES,AUTOSELECT=YES,URI=\"audio.m3u8\"\n"+
 		"#EXT-X-STREAM-INF:BANDWIDTH=%d,AUDIO=\"sound\"\nvideo.m3u8\n", s.ladder.qualities[l.quality].rate)
@@ -200,7 +198,7 @@ func (s *stage) playlist(w http.ResponseWriter, req *http.Request, video bool) {
 	s.mu.Lock()
 	text := s.rewrite(t, letter)
 	s.mu.Unlock()
-	w.Header().Set("Content-Type", playlistType)
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	io.WriteString(w, text)
 }
 

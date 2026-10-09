@@ -13,7 +13,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 
 	"github.com/combor/telesfor/internal/provider"
 	"github.com/combor/telesfor/internal/provider/cultura"
@@ -32,23 +35,44 @@ import (
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
+// A source is a TV provider telesfor offers, with a tuner of its own and a
+// proxy flag, which its tab of the settings page shows.
+type source struct {
+	key    string // names its -<key>-proxy flag and TELESFOR_<KEY>_PROXY
+	about  string // the provider, and why it may want a proxy, for -help
+	open   func(proxy string, db *bolt.DB) (provider.Provider, error)
+	device tuner.Device
+}
+
+// Every TV source plugs in here. A tuner's ID, path and numbers are how Plex
+// knows it, so each row gives its own and they stay as they are. TVP's tuner
+// is at the root, where Plex has known it since it was the only one.
+var sources = []source{
+	{"tvp", "TVP, which blocks most channels outside Poland", proxied(tvp.New),
+		tuner.Device{ID: "7E1E5F04", Name: "TVP", First: 1}},
+	{"globo", "Globoplay, which blocks its channels outside Brazil", stored(globo.New),
+		tuner.Device{ID: "7E1E5F05", Name: "Globoplay", Path: "/globo", First: 1001}},
+	{"ebc", "EBC, should it block its channels outside Brazil", proxied(ebc.New),
+		tuner.Device{ID: "7E1E5F06", Name: "EBC", Path: "/ebc", First: 2001}},
+	{"cultura", "TV Cultura, should it block its channels outside Brazil", proxied(cultura.New),
+		tuner.Device{ID: "7E1E5F07", Name: "TV Cultura", Path: "/cultura", First: 3001}},
+	{"francetv", "France Télévisions, which blocks most channels outside France", proxied(francetv.New),
+		tuner.Device{ID: "7E1E5F08", Name: "france.tv", Path: "/francetv", First: 4001}},
+	{"tf1", "TF1+, which blocks most channels outside France", stored(tf1.New),
+		tuner.Device{ID: "7E1E5F09", Name: "TF1+", Path: "/tf1", First: 5001}},
+	// WP Pilot plays an account three channels at once.
+	{"wppilot", "WP Pilot, which blocks its channels outside Poland", stored(wppilot.New),
+		tuner.Device{ID: "7E1E5F0A", Name: "WP Pilot", Path: "/wppilot", First: 6001, Tuners: 3}},
+}
+
 func main() {
 	listen := flag.String("listen", envOr("TELESFOR_LISTEN", ":5004"),
 		"address to listen on (env TELESFOR_LISTEN)")
-	tvpProxy := flag.String("tvp-proxy", os.Getenv("TELESFOR_TVP_PROXY"),
-		"HTTP proxy for TVP, which blocks most channels outside Poland (env TELESFOR_TVP_PROXY)")
-	globoProxy := flag.String("globo-proxy", os.Getenv("TELESFOR_GLOBO_PROXY"),
-		"HTTP proxy for Globoplay, which blocks its channels outside Brazil (env TELESFOR_GLOBO_PROXY)")
-	ebcProxy := flag.String("ebc-proxy", os.Getenv("TELESFOR_EBC_PROXY"),
-		"HTTP proxy for EBC, should it block its channels outside Brazil (env TELESFOR_EBC_PROXY)")
-	culturaProxy := flag.String("cultura-proxy", os.Getenv("TELESFOR_CULTURA_PROXY"),
-		"HTTP proxy for TV Cultura, should it block its channels outside Brazil (env TELESFOR_CULTURA_PROXY)")
-	francetvProxy := flag.String("francetv-proxy", os.Getenv("TELESFOR_FRANCETV_PROXY"),
-		"HTTP proxy for France Télévisions, which blocks most channels outside France (env TELESFOR_FRANCETV_PROXY)")
-	tf1Proxy := flag.String("tf1-proxy", os.Getenv("TELESFOR_TF1_PROXY"),
-		"HTTP proxy for TF1+, which blocks most channels outside France (env TELESFOR_TF1_PROXY)")
-	wppilotProxy := flag.String("wppilot-proxy", os.Getenv("TELESFOR_WPPILOT_PROXY"),
-		"HTTP proxy for WP Pilot, which blocks its channels outside Poland (env TELESFOR_WPPILOT_PROXY)")
+	proxies := make([]string, len(sources))
+	for i, s := range sources {
+		flag.StringVar(&proxies[i], s.flag(), os.Getenv(s.env()),
+			"HTTP proxy for "+s.about+" (env "+s.env()+")")
+	}
 	data := flag.String("data", dataDir(),
 		"directory to keep sign-ins in (env TELESFOR_DATA)")
 	debug := flag.Bool("debug", os.Getenv("TELESFOR_DEBUG") != "",
@@ -72,13 +96,15 @@ func main() {
 	if *debug {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
-	if err := run(*listen, *tvpProxy, *globoProxy, *ebcProxy, *culturaProxy, *francetvProxy, *tf1Proxy, *wppilotProxy, *data, *debug); err != nil {
+	if err := run(*listen, *data, *debug, proxies); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(listen, tvpProxy, globoProxy, ebcProxy, culturaProxy, francetvProxy, tf1Proxy, wppilotProxy, data string, debug bool) error {
+// run puts telesfor on the air. proxies holds the proxy of each source, in the
+// order of sources.
+func run(listen, data string, debug bool, proxies []string) error {
 	if data == "" {
 		return errors.New("no home directory to keep sign-ins in: set -data")
 	}
@@ -88,58 +114,13 @@ func run(listen, tvpProxy, globoProxy, ebcProxy, culturaProxy, francetvProxy, tf
 	}
 	defer db.Close()
 
-	tvpProvider, err := tvp.New(tvpProxy)
-	if err != nil {
-		return err
-	}
-	globoProvider, err := globo.New(globoProxy, db)
-	if err != nil {
-		return err
-	}
-	ebcProvider, err := ebc.New(ebcProxy)
-	if err != nil {
-		return err
-	}
-	culturaProvider, err := cultura.New(culturaProxy)
-	if err != nil {
-		return err
-	}
-	francetvProvider, err := francetv.New(francetvProxy)
-	if err != nil {
-		return err
-	}
-	tf1Provider, err := tf1.New(tf1Proxy, db)
-	if err != nil {
-		return err
-	}
-	wppilotProvider, err := wppilot.New(wppilotProxy, db)
-	if err != nil {
-		return err
-	}
-
-	// Every TV source plugs in here, with a tuner of its own and the settings
-	// it was started with, for its tab of the settings page. TVP's tuner is at
-	// the root, where Plex has known it since it was the only one.
-	sources := []struct {
-		provider.Provider
-		tuner.Device
-		settings []web.Setting
-	}{
-		{tvpProvider, tuner.Device{ID: "7E1E5F04", Name: "TVP", First: 1},
-			[]web.Setting{proxySetting(tvpProxy, "-tvp-proxy", "TELESFOR_TVP_PROXY")}},
-		{globoProvider, tuner.Device{ID: "7E1E5F05", Name: "Globoplay", Path: "/globo", First: 1001},
-			[]web.Setting{proxySetting(globoProxy, "-globo-proxy", "TELESFOR_GLOBO_PROXY")}},
-		{ebcProvider, tuner.Device{ID: "7E1E5F06", Name: "EBC", Path: "/ebc", First: 2001},
-			[]web.Setting{proxySetting(ebcProxy, "-ebc-proxy", "TELESFOR_EBC_PROXY")}},
-		{culturaProvider, tuner.Device{ID: "7E1E5F07", Name: "TV Cultura", Path: "/cultura", First: 3001},
-			[]web.Setting{proxySetting(culturaProxy, "-cultura-proxy", "TELESFOR_CULTURA_PROXY")}},
-		{francetvProvider, tuner.Device{ID: "7E1E5F08", Name: "france.tv", Path: "/francetv", First: 4001},
-			[]web.Setting{proxySetting(francetvProxy, "-francetv-proxy", "TELESFOR_FRANCETV_PROXY")}},
-		{tf1Provider, tuner.Device{ID: "7E1E5F09", Name: "TF1+", Path: "/tf1", First: 5001},
-			[]web.Setting{proxySetting(tf1Proxy, "-tf1-proxy", "TELESFOR_TF1_PROXY")}},
-		// WP Pilot plays an account three channels at once.
-		{wppilotProvider, tuner.Device{ID: "7E1E5F0A", Name: "WP Pilot", Path: "/wppilot", First: 6001, Tuners: 3},
-			[]web.Setting{proxySetting(wppilotProxy, "-wppilot-proxy", "TELESFOR_WPPILOT_PROXY")}},
+	// Every provider is opened before any tuner asks the network for its
+	// channels, so that a bad proxy is reported at once.
+	providers := make([]provider.Provider, len(sources))
+	for i, s := range sources {
+		if providers[i], err = s.open(proxies[i], db); err != nil {
+			return err
+		}
 	}
 
 	remuxer, err := remux.New()
@@ -149,13 +130,13 @@ func run(listen, tvpProxy, globoProxy, ebcProxy, culturaProxy, francetvProxy, tf
 	mux := http.NewServeMux()
 	ui := &web.Handler{Settings: settings(listen, data, debug), Version: version}
 	channels := 0
-	for _, source := range sources {
-		t, err := tuner.New(context.Background(), source.Provider, remuxer, source.Device)
+	for i, s := range sources {
+		t, err := tuner.New(context.Background(), providers[i], remuxer, s.device)
 		if err != nil {
 			return err
 		}
 		t.Register(mux)
-		ui.Providers = append(ui.Providers, web.Provider{Tuner: t, Settings: source.settings})
+		ui.Providers = append(ui.Providers, web.Provider{Tuner: t, Settings: []web.Setting{s.proxySetting(proxies[i])}})
 		channels += len(t.Lineup())
 	}
 	ui.Register(mux)
@@ -190,14 +171,30 @@ func settings(listen, data string, debug bool) []web.Setting {
 	}
 }
 
-// proxySetting is a provider's proxy, for its tab of the settings page.
-func proxySetting(proxy, flag, env string) web.Setting {
-	setting := web.Setting{Name: "Proxy", State: "Not set", Flag: flag, Env: env}
+// flag is the name of the source's proxy flag.
+func (s source) flag() string { return s.key + "-proxy" }
+
+// env is the environment variable that sets the source's proxy.
+func (s source) env() string { return "TELESFOR_" + strings.ToUpper(s.key) + "_PROXY" }
+
+// proxySetting is the source's proxy, for its tab of the settings page.
+func (s source) proxySetting(proxy string) web.Setting {
+	setting := web.Setting{Name: "Proxy", State: "Not set", Flag: "-" + s.flag(), Env: s.env()}
 	if u, err := url.Parse(proxy); err == nil && u.Host != "" {
 		u.User = nil // the page is open to whoever can reach the tuner
 		setting.Value, setting.State = u.String(), ""
 	}
 	return setting
+}
+
+// proxied opens a provider that needs only its proxy.
+func proxied[P provider.Provider](open func(proxy string) (P, error)) func(string, *bolt.DB) (provider.Provider, error) {
+	return func(proxy string, _ *bolt.DB) (provider.Provider, error) { return open(proxy) }
+}
+
+// stored opens a provider that keeps its sign-in in the store.
+func stored[P provider.Provider](open func(proxy string, db *bolt.DB) (P, error)) func(string, *bolt.DB) (provider.Provider, error) {
+	return func(proxy string, db *bolt.DB) (provider.Provider, error) { return open(proxy, db) }
 }
 
 // checkHealth asks the telesfor that listens on the given address whether it is

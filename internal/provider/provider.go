@@ -2,9 +2,9 @@
 // telesfor.
 //
 // To add a source, implement Provider in a package under internal/provider and
-// give it a tuner in cmd/telesfor/main.go. The tuner comes with a tab on the
-// settings page, where an Account has its sign-in and Settings bring a part of
-// their own.
+// add a row for it to sources in cmd/telesfor/main.go, which gives it a tuner
+// and a proxy flag. The tuner comes with a tab on the settings page, where an
+// Account has its sign-in and Settings bring a part of their own.
 package provider
 
 import (

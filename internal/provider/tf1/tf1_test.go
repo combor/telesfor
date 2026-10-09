@@ -424,13 +424,13 @@ func TestTokens(t *testing.T) {
 
 func TestStream(t *testing.T) {
 	f, p := signedIn(t)
-	for _, stream := range [][2]string{
+	for _, stream := range []struct{ channel, path string }{
 		{"tf1", "/pass1/prod/TF1/cmaf/out/TF1.m3u8"}, // as it is broadcast
 		{"tf1-series-films", "/pass2/prod/TF1-SERIES-FILMS/cmaf/out/TF1-SERIES-FILMS.m3u8"},
 		{"lci", "/pass3/prod/LCI/cmaf/out/LCI.m3u8"},
 	} {
-		if source, err := p.Stream(t.Context(), stream[0]); err != nil || source.URL != f.url+stream[1] {
-			t.Errorf("Stream(%s) = %+v, %v: want the master playlist at %s", stream[0], source, err, stream[1])
+		if source, err := p.Stream(t.Context(), stream.channel); err != nil || source.URL != f.url+stream.path {
+			t.Errorf("Stream(%s) = %+v, %v: want the master playlist at %s", stream.channel, source, err, stream.path)
 		}
 	}
 	slices.Sort(f.asked)
@@ -439,36 +439,44 @@ func TestStream(t *testing.T) {
 		t.Errorf("the player's API was asked for %q, want %q", f.asked, want)
 	}
 
-	for refusal, want := range map[string]string{
-		"GEOBLOCKED":        "-tf1-proxy",
-		"PERMISSION_DENIED": "no access to TFX",
-		"NOT_FOUND":         "TFX is unavailable: TF1 answers 403 NOT_FOUND",
-	} {
-		f.refusal = refusal
-		if _, err := p.Stream(t.Context(), "tfx"); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("Stream() refused with %s = %v, want an error with %q", refusal, err, want)
-		}
-	}
-	f.refusal, f.drm = "", true
-	if _, err := p.Stream(t.Context(), "tfx"); err == nil || !strings.Contains(err.Error(), "DRM") {
-		t.Errorf("Stream() of an encrypted channel = %v, want a DRM error", err)
-	}
-	f.drm, f.format = false, "dash"
-	if _, err := p.Stream(t.Context(), "tfx"); err == nil || !strings.Contains(err.Error(), "no HLS stream") {
-		t.Errorf("Stream() of a channel in another format = %v, want an error that says so", err)
-	}
-	if login := p.Login(); login != (provider.Login{State: provider.SignedIn}) {
-		t.Errorf("sign-in after refusals that say nothing of it: %+v", login)
-	}
-
 	_, signedOut := serve(t, nil)
-	if _, err := signedOut.Stream(t.Context(), "tfx"); err == nil || !strings.Contains(err.Error(), "sign in") {
-		t.Errorf("Stream() without an account = %v, want a call to sign in", err)
-	}
 	if _, err := signedOut.Stream(t.Context(), "lci"); err != nil {
 		t.Errorf("Stream() of LCI without an account = %v", err)
 	}
-	if source, err := signedOut.Stream(t.Context(), "tmc"); err == nil {
+}
+
+func TestStreamRefused(t *testing.T) {
+	tests := []struct {
+		name string
+		set  func(*tf1)
+		want string // what the error must mention
+	}{
+		{"abroad", func(f *tf1) { f.refusal = "GEOBLOCKED" }, "-tf1-proxy"},
+		{"no access", func(f *tf1) { f.refusal = "PERMISSION_DENIED" }, "no access to TFX"},
+		{"gone", func(f *tf1) { f.refusal = "NOT_FOUND" }, "TFX is unavailable: TF1 answers 403 NOT_FOUND"},
+		{"encrypted", func(f *tf1) { f.drm = true }, "DRM"},
+		{"in another format", func(f *tf1) { f.format = "dash" }, "no HLS stream"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f, p := signedIn(t)
+			test.set(f)
+
+			_, err := p.Stream(t.Context(), "tfx")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Errorf("Stream() error = %v, want one mentioning %q", err, test.want)
+			}
+			if login := p.Login(); login != (provider.Login{State: provider.SignedIn}) {
+				t.Errorf("sign-in after a refusal that says nothing of it: %+v", login)
+			}
+		})
+	}
+
+	_, p := serve(t, nil)
+	if _, err := p.Stream(t.Context(), "tfx"); err == nil || !strings.Contains(err.Error(), "sign in") {
+		t.Errorf("Stream() without an account = %v, want a call to sign in", err)
+	}
+	if source, err := p.Stream(t.Context(), "tmc"); err == nil {
 		t.Errorf("Stream() of a channel that is not offered = %+v, want an error", source)
 	}
 }

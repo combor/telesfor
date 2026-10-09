@@ -639,34 +639,52 @@ func TestStream(t *testing.T) {
 	if opens := f.opened[len(f.opened)-3:]; !strings.HasPrefix(opens[0], "9 ") || !strings.HasPrefix(opens[1], "158 ") || !strings.HasPrefix(opens[2], "158 ") {
 		t.Errorf("a change of channel with the account full: opened %q, want the new channel asked for again once the old was closed", opens)
 	}
+}
 
-	for refusal, want := range map[string]string{
-		"user_outside_eu":               "-wppilot-proxy",
-		"user_not_verified_eu":          "-wppilot-proxy",
-		"user_channel_proxy_detected":   "refused at this address",
-		"multiroom_limit_exceeded":      "with Polsat HD, TVN playing",
-		"stream_consumption_over_limit": "WP Pilot answers 422 stream_consumption_over_limit",
-		"channel_switch_limit":          "WP Pilot answers 422 channel_switch_limit",
-	} {
-		f.set(func() { f.refusal = refusal })
-		if _, err := p.Stream(t.Context(), "9"); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("Stream() refused with %s = %v, want an error with %q", refusal, err, want)
-		}
+func TestStreamRefused(t *testing.T) {
+	tests := []struct {
+		refusal string // WP's name for it
+		want    string // what the error must mention
+	}{
+		{"user_outside_eu", "-wppilot-proxy"},
+		{"user_not_verified_eu", "-wppilot-proxy"},
+		{"user_channel_proxy_detected", "refused at this address"},
+		{"multiroom_limit_exceeded", "with Polsat HD, TVN playing"},
+		{"stream_consumption_over_limit", "WP Pilot answers 422 stream_consumption_over_limit"},
+		{"channel_switch_limit", "WP Pilot answers 422 channel_switch_limit"},
 	}
-	if got, _ := p.Channels(t.Context()); !slices.Equal(got, channels) || p.Login() != (provider.Login{State: provider.SignedIn}) {
-		t.Errorf("after the refusals: channels %v, sign-in %+v: want neither touched", got, p.Login())
+	for _, test := range tests {
+		t.Run(test.refusal, func(t *testing.T) {
+			f, p := signedIn(t)
+			f.set(func() { f.refusal = test.refusal })
+
+			_, err := p.Stream(t.Context(), "9")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Errorf("Stream() error = %v, want one mentioning %q", err, test.want)
+			}
+			if got, _ := p.Channels(t.Context()); !slices.Equal(got, channels) || p.Login() != (provider.Login{State: provider.SignedIn}) {
+				t.Errorf("after the refusal: channels %v, sign-in %+v: want neither touched", got, p.Login())
+			}
+		})
 	}
+
+	_, p := signedIn(t)
 	if _, err := p.Stream(t.Context(), "16"); err == nil || !strings.Contains(err.Error(), "no channel") {
 		t.Errorf("Stream() of a channel the account lacks = %v", err)
-	}
-
-	f.set(func() { f.refusal, f.revoked = "", true })
-	if _, err := p.Stream(t.Context(), "9"); err == nil || !strings.Contains(err.Error(), "sign in again") || p.Login().State != provider.Expired {
-		t.Errorf("Stream() with a session WP dropped = %v, sign-in %+v: want it expired", err, p.Login())
 	}
 	_, signedOut := serve(t, nil)
 	if _, err := signedOut.Stream(t.Context(), "9"); err == nil || !strings.Contains(err.Error(), "sign in") {
 		t.Errorf("Stream() without an account = %v, want a call to sign in", err)
+	}
+}
+
+// TestStreamExpiresTheSignIn checks that a stream WP refuses to a session it
+// no longer knows expires the sign-in.
+func TestStreamExpiresTheSignIn(t *testing.T) {
+	f, p := signedIn(t)
+	f.set(func() { f.revoked = true })
+	if _, err := p.Stream(t.Context(), "9"); err == nil || !strings.Contains(err.Error(), "sign in again") || p.Login().State != provider.Expired {
+		t.Errorf("Stream() with a session WP dropped = %v, sign-in %+v: want it expired", err, p.Login())
 	}
 }
 

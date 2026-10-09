@@ -360,18 +360,49 @@ func TestStream(t *testing.T) {
 		strings.Contains(*g.asked.Load(), "dvr") {
 		t.Errorf("playback request lacks %q, or asks for the long playlist: %s", missing, *g.asked.Load())
 	}
+}
 
-	for refusal, want := range map[string]string{
-		"403 geo-block":           "blocked outside Brazil",
-		"404 geo-fencing":         "blocked outside Brazil",
-		"403 user-not-authorized": "no access to this channel",
-		"401 login-required":      "sign in again",
-		"404 video-not-found":     "Not Found video-not-found",
-	} {
-		g.refusal = refusal
-		if _, err := p.Stream(t.Context(), "futura"); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("Stream() refused with %q = %v, want an error with %q", refusal, err, want)
-		}
+func TestStreamRefused(t *testing.T) {
+	tests := []struct {
+		name string
+		set  func(*globo)
+		want string // what the error must mention
+	}{
+		{"abroad", func(g *globo) { g.refusal = "403 geo-block" }, "blocked outside Brazil"},
+		{"fenced in", func(g *globo) { g.refusal = "404 geo-fencing" }, "blocked outside Brazil"},
+		{"no access", func(g *globo) { g.refusal = "403 user-not-authorized" }, "no access to this channel"},
+		{"gone", func(g *globo) { g.refusal = "404 video-not-found" }, "Not Found video-not-found"},
+		{"encrypted", func(g *globo) { g.drm = true }, "DRM"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g, p := signedIn(t)
+			test.set(g)
+
+			_, err := p.Stream(t.Context(), "futura")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Errorf("Stream() error = %v, want one mentioning %q", err, test.want)
+			}
+			if login := p.Login(); login != (provider.Login{State: provider.SignedIn}) {
+				t.Errorf("sign-in after a refusal that says nothing of it: %+v", login)
+			}
+		})
+	}
+
+	_, p := serve(t, nil)
+	if _, err := p.Stream(t.Context(), "futura"); err == nil || !strings.Contains(err.Error(), "sign in") {
+		t.Errorf("Stream() without an account = %v, want a call to sign in", err)
+	}
+}
+
+// TestStreamExpiresTheSignIn checks that a stream Globo refuses for want of
+// a login expires the sign-in, unless another account has taken its place
+// since.
+func TestStreamExpiresTheSignIn(t *testing.T) {
+	g, p := signedIn(t)
+	g.refusal = "401 login-required"
+	if _, err := p.Stream(t.Context(), "futura"); err == nil || !strings.Contains(err.Error(), "sign in again") {
+		t.Errorf("Stream() refused with a call to log in = %v, want one to sign in again", err)
 	}
 	if login := p.Login(); login.State != provider.Expired {
 		t.Errorf("sign-in after Globo asked for a login: %+v, want it expired", login)
@@ -381,16 +412,6 @@ func TestStream(t *testing.T) {
 	p.account, p.expired = &account{GLBID: "session", Channels: old.Channels}, false
 	if p.expire(old); p.Login().State != provider.SignedIn {
 		t.Errorf("sign-in after a refusal of the account before it: %+v", p.Login())
-	}
-
-	g.refusal, g.drm = "", true
-	if _, err := p.Stream(t.Context(), "futura"); err == nil || !strings.Contains(err.Error(), "DRM") {
-		t.Errorf("Stream() of an encrypted channel = %v, want a DRM error", err)
-	}
-
-	_, signedOut := serve(t, nil)
-	if _, err := signedOut.Stream(t.Context(), "futura"); err == nil || !strings.Contains(err.Error(), "sign in") {
-		t.Errorf("Stream() without an account = %v, want a call to sign in", err)
 	}
 }
 

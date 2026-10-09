@@ -139,16 +139,32 @@ func (s *stage) change(l *leg, to int, why string) {
 // If it had none, it starts in the best, as it does when nothing is known of
 // the connection.
 func (s *stage) after(l *leg, wrote bool, ended error) (*leg, error) {
+	best := len(s.ladder.qualities) - 1
 	var failed error
 	for {
 		s.mu.Lock()
 		next, over := s.pending, s.over
 		s.pending = nil
-		if next == nil && !wrote && !over {
-			next = s.standIn(l)
+		if next == nil && !wrote && !over && !l.standsIn && (l.before != nil || l.quality != best) {
+			instead := best
+			if l.before != nil {
+				instead = l.before.quality
+			}
+			next = s.add(instead, l.before)
+			next.standsIn, next.startsOver = true, l.startsOver
 		}
 		if next != nil {
-			s.takeOver(next)
+			s.current = next
+			// A leg begins where the one before it ended, so the legs before
+			// that are of no more use, and their playlists may be hours long.
+			for i, old := range s.legs {
+				if old != next && old != next.before {
+					s.legs[i] = nil
+				}
+			}
+			if next.before != nil {
+				next.before.before = nil
+			}
 		}
 		s.mu.Unlock()
 		if next == nil {
@@ -165,37 +181,6 @@ func (s *stage) after(l *leg, wrote bool, ended error) (*leg, error) {
 			return next, nil
 		}
 		l, wrote, failed = next, false, fmt.Errorf("remux: starting ffmpeg: %w", next.failed)
-	}
-}
-
-// standIn starts a leg in place of l, which wrote nothing: see after. It
-// starts none that would repeat what failed. The caller holds the lock.
-func (s *stage) standIn(l *leg) *leg {
-	best := len(s.ladder.qualities) - 1
-	if l.standsIn || (l.before == nil && l.quality == best) {
-		return nil
-	}
-	instead := best
-	if l.before != nil {
-		instead = l.before.quality
-	}
-	next := s.add(instead, l.before)
-	next.standsIn, next.startsOver = true, l.startsOver
-	return next
-}
-
-// takeOver makes a leg the current one. The leg begins where the one before
-// it ended, so the legs before that are of no more use, and their playlists
-// may be hours long. The caller holds the lock.
-func (s *stage) takeOver(next *leg) {
-	s.current = next
-	for i, old := range s.legs {
-		if old != next && old != next.before {
-			s.legs[i] = nil
-		}
-	}
-	if next.before != nil {
-		next.before.before = nil
 	}
 }
 

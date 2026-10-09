@@ -120,24 +120,19 @@ func (t *Tuner) currentGuide() *guide {
 // A fetch that fails leaves the guide there was, which Plex is given rather
 // than nothing, and is tried again sooner: see guideRetry.
 func (t *Tuner) keepFresh(ctx context.Context) {
-	for retry := guideRetry; ; {
-		select {
-		case t.fetching <- struct{}{}:
-		case <-ctx.Done():
+	retry := guideRetry
+	for {
+		wait, err := t.refreshGuide(ctx)
+		switch {
+		case ctx.Err() != nil:
 			return
-		}
-		wait := guideRefresh
-		if g := t.currentGuide(); g != nil && time.Since(g.made) < guideRefresh {
-			wait = guideRefresh - time.Since(g.made) // fetched meanwhile, by a request or an earlier pass
-			retry = guideRetry                       // a fetch succeeded, whosever it was
-		} else if _, err := t.fetchGuide(ctx); err != nil && ctx.Err() == nil {
+		case err != nil:
 			slog.Error("guide refresh failed", "provider", t.provider.Name(), "err", err)
 			// A source that stays down is asked less and less often.
 			wait, retry = retry, min(2*retry, guideRefresh)
-		} else {
-			retry = guideRetry
+		default:
+			retry = guideRetry // a fetch succeeded, whosever it was
 		}
-		<-t.fetching
 		select {
 		case <-ctx.Done():
 			return
@@ -145,6 +140,27 @@ func (t *Tuner) keepFresh(ctx context.Context) {
 		case <-time.After(wait):
 		}
 	}
+}
+
+// refreshGuide fetches the guide, unless one fresh enough is at hand: fetched
+// meanwhile, by a request or an earlier pass. It returns how long the guide
+// stays fresh, which is when the next fetch is due.
+func (t *Tuner) refreshGuide(ctx context.Context) (time.Duration, error) {
+	select {
+	case t.fetching <- struct{}{}:
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+	defer func() { <-t.fetching }()
+	if g := t.currentGuide(); g != nil {
+		if age := time.Since(g.made); age < guideRefresh {
+			return guideRefresh - age, nil
+		}
+	}
+	if _, err := t.fetchGuide(ctx); err != nil {
+		return 0, err
+	}
+	return guideRefresh, nil
 }
 
 // fetchGuide asks the provider for the programmes of the whole lineup,

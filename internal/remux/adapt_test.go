@@ -433,7 +433,7 @@ func TestControllerLeavesAFailedStepUpAlone(t *testing.T) {
 			step(2, test.up)
 		}
 		step(1, test.back)
-		if got := max(c.barred[2].Sub(now), 0); got != test.want {
+		if got := max(c.standing[2].barred.Sub(now), 0); got != test.want {
 			t.Errorf("%s: the best quality is left alone for %v, want %v", test.name, got, test.want)
 		}
 	}

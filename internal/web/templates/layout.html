@@ -46,7 +46,7 @@
   <h1 class="page-title">Settings</h1>
   <nav class="tabs" aria-label="Settings">
     {{- range .Tabs}}
-    <a class="tab" href="{{.Path}}"{{if .Current}} aria-current="page"{{end}}{{with .Problem}} title="{{.}}"{{end}}>{{.Name}}{{if .Problem}}<span class="tab-dot" aria-hidden="true"></span>{{end}}</a>
+    <a class="tab" href="{{.Path}}"{{if .Current}} aria-current="page"{{end}}{{with .Problem}} title="{{.}}"{{end}}>{{.Name}}{{if .Problem}}<span class="dot" aria-hidden="true"></span>{{end}}</a>
     {{- end}}
   </nav>
   {{template "page" .}}

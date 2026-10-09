@@ -291,7 +291,7 @@ func TestSignIn(t *testing.T) {
 	}
 	// Every other tab says so too.
 	if missing := lacks(get(t, server, "/ui/server").body,
-		`<a class="tab" href="/ui/providers/club" title="Sign-in expired">Club<span class="tab-dot" aria-hidden="true"></span></a>`,
+		`<a class="tab" href="/ui/providers/club" title="Sign-in expired">Club<span class="dot" aria-hidden="true"></span></a>`,
 	); missing != nil {
 		t.Errorf("another tab, with the club's sign-in expired, lacks %q", missing)
 	}

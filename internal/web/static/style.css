@@ -204,7 +204,7 @@ code {
   transition: background-color 0.3s, color 0.3s;
 }
 
-.pill .dot {
+.dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -271,12 +271,7 @@ code {
 }
 
 /* The provider needs seeing to, such as a sign-in to renew. */
-.tab-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--warn);
-}
+.tab .dot { background: var(--warn); }
 
 .card {
   background: var(--surface);
@@ -425,7 +420,7 @@ code {
   font-size: 13px;
 }
 
-.guide-note a {
+.guide-note a, .account a {
   color: inherit;
   font-weight: 600;
   text-decoration-thickness: 1px;
@@ -500,13 +495,6 @@ code {
 
 .account p { max-width: 62ch; }
 .account .for { margin-top: 0; }
-
-.account a {
-  color: inherit;
-  font-weight: 600;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
-}
 
 .code {
   display: inline-block;

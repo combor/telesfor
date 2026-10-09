@@ -132,7 +132,19 @@ func (r *Remuxer) play(ctx context.Context, w io.Writer, s Stream, relay *relay,
 	}()
 
 	st, err := openStage(relay, qualities, ctl, gauge, func(l *leg, input string) error {
-		return r.launch(ctx, l, input)
+		ctx, stop := context.WithCancel(ctx)
+		// The stage has each leg begin with its first segment.
+		cmd := r.command(ctx, input, "-live_start_index", "0")
+		written, err := cmd.StdoutPipe()
+		if err == nil {
+			err = cmd.Start()
+		}
+		if err != nil {
+			stop()
+			return err
+		}
+		l.stop, l.out, l.wait = stop, written, sync.OnceValue(cmd.Wait)
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("remux: %w", err)
@@ -168,22 +180,6 @@ func (r *Remuxer) play(ctx context.Context, w io.Writer, s Stream, relay *relay,
 			splice.next()
 		}
 	}
-}
-
-func (r *Remuxer) launch(ctx context.Context, l *leg, input string) error {
-	ctx, stop := context.WithCancel(ctx)
-	// The stage has each leg begin with its first segment.
-	cmd := r.command(ctx, input, "-live_start_index", "0")
-	written, err := cmd.StdoutPipe()
-	if err == nil {
-		err = cmd.Start()
-	}
-	if err != nil {
-		stop()
-		return err
-	}
-	l.stop, l.out, l.wait = stop, written, sync.OnceValue(cmd.Wait)
-	return nil
 }
 
 // command returns the ffmpeg that remuxes what it reads at an address to

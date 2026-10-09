@@ -19,7 +19,7 @@ type leg struct {
 	video, sound track
 
 	flying context.Context    // done once the segments on their way are given up
-	drop   context.CancelFunc //
+	drop   context.CancelFunc // gives up the segments on their way: ends flying
 	stop   context.CancelFunc // stops its ffmpeg
 	out    io.Reader          // what its ffmpeg writes
 	wait   func() error       // waits for its ffmpeg to end, as often as it is asked

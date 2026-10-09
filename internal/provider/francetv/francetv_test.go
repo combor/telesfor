@@ -388,15 +388,19 @@ func TestStream(t *testing.T) {
 		t.Errorf("a segment after the pass ran out: %d %q with %d passes handed out, asked for by range: %t, want it with a second pass, by range",
 			status, picture, f.passes, f.ranged["high-48337899.ts"])
 	}
+	f.revoked["pass2"] = true
+	if status, _ := fetch("high.m3u8"); status != http.StatusOK || f.passes != 3 {
+		t.Errorf("a playlist after the second pass ran out: %d with %d passes handed out, want 200 with a third", status, f.passes)
+	}
 	// A new pass that is refused is refused for something else.
 	p.rest = time.Hour
 	again, err := p.Stream(t.Context(), "france-2")
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.revoked["pass3"] = true
-	resp, _ := providertest.Get(t, again.Client, f.url+"/pass3/live/france-2/high.m3u8")
-	if resp.StatusCode != http.StatusForbidden || f.passes != 3 {
+	f.revoked["pass4"] = true
+	resp, _ := providertest.Get(t, again.Client, f.url+"/pass4/live/france-2/high.m3u8")
+	if resp.StatusCode != http.StatusForbidden || f.passes != 4 {
 		t.Errorf("a new pass refused: %s with %d passes handed out, want 403 and no pass more", resp.Status, f.passes)
 	}
 	if f.directed != 1 {

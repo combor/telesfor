@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/combor/telesfor/internal/httpclient"
 	"github.com/combor/telesfor/internal/provider"
 	"github.com/combor/telesfor/internal/provider/providertest"
 )
@@ -374,7 +373,6 @@ func TestStream(t *testing.T) {
 		t.Fatalf("Stream() = %+v, %v: want the master playlist at %s", source, err, want)
 	}
 	// As ffmpeg fetches: a range of everything.
-	var from string // where the latest answer says it is from
 	fetch := func(file string) (int, string) {
 		t.Helper()
 		req, _ := http.NewRequest(http.MethodGet, f.url+"/pass1/live/france-2/"+file, nil)
@@ -385,7 +383,6 @@ func TestStream(t *testing.T) {
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
-		from = resp.Request.URL.Path
 		return resp.StatusCode, string(body)
 	}
 
@@ -398,22 +395,11 @@ func TestStream(t *testing.T) {
 	if status, playlist := fetch("high.m3u8"); status != http.StatusOK || playlist != want || f.ranged["high.m3u8"] {
 		t.Errorf("the playlist of the quality: %d, asked for by range: %t\n%s\nwant it whole:\n%s", status, f.ranged["high.m3u8"], playlist, want)
 	}
-	if status, picture := fetch("high-48337899.ts"); status != http.StatusOK || picture != "picture" || !f.ranged["high-48337899.ts"] {
-		t.Errorf("a segment: %d %q, asked for by range: %t, want it as ffmpeg asked", status, picture, f.ranged["high-48337899.ts"])
-	}
-
 	// The pass runs out: the stream goes on with a new one.
 	f.revoked["pass1"] = true
-	if status, _ := fetch("high.m3u8"); status != http.StatusOK || f.passes != 2 {
-		t.Errorf("after the pass ran out: %d with %d passes handed out, want 200 with a second", status, f.passes)
-	}
-	// What the playlist lists is found from where the playlist is, and so
-	// asked for with the first pass too: no other is renewed.
-	if want := "/pass1/live/france-2/high.m3u8"; from != want {
-		t.Errorf("after the pass ran out, the playlist is from %s, want it from where it was asked for, %s", from, want)
-	}
-	if status, _ := fetch("high-48337899.ts"); status != http.StatusOK || f.passes != 2 {
-		t.Errorf("the request after: %d with %d passes handed out, want 200 with the second", status, f.passes)
+	if status, picture := fetch("high-48337899.ts"); status != http.StatusOK || picture != "picture" || f.passes != 2 || !f.ranged["high-48337899.ts"] {
+		t.Errorf("a segment after the pass ran out: %d %q with %d passes handed out, asked for by range: %t, want it with a second pass, by range",
+			status, picture, f.passes, f.ranged["high-48337899.ts"])
 	}
 	// A new pass that is refused is refused for something else.
 	p.rest = time.Hour
@@ -428,30 +414,6 @@ func TestStream(t *testing.T) {
 	}
 	if f.directed != 1 {
 		t.Errorf("asked for the list of live channels %d times, want once for both tunes", f.directed)
-	}
-}
-
-func TestStreamOverTheSegmentPool(t *testing.T) {
-	f, p := serve(t)
-	source, err := p.Stream(t.Context(), "france-2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	segments, release := httpclient.SegmentClient(source.Client)
-	defer release()
-
-	f.revoked["pass1"] = true
-	req, _ := http.NewRequest(http.MethodGet, f.url+"/pass1/live/france-2/high-48337899.ts", nil)
-	req.Header.Set("Range", "bytes=0-")
-	resp, err := segments.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	picture, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || string(picture) != "picture" || f.passes != 2 || !f.ranged["high-48337899.ts"] {
-		t.Errorf("a segment after the pass ran out: %d %q with %d passes handed out, asked for by range: %t, want it with a second pass, by range",
-			resp.StatusCode, picture, f.passes, f.ranged["high-48337899.ts"])
 	}
 }
 

@@ -24,7 +24,9 @@ const (
 
 	// margin is how long before its time is up a token is renewed.
 	margin = 5 * time.Minute
+)
 
+const (
 	codeExpired = "The code expired before it was entered."
 	unsaved     = "The sign-in could not be saved, so it will not outlast a restart of telesfor."
 )
@@ -96,12 +98,12 @@ func (p *Provider) SignIn(ctx context.Context) error {
 		p.problem = "TF1 gave no code to sign in with. telesfor's log has the reason."
 		return fmt.Errorf("tf1: asking for a sign-in code: %w", err)
 	}
-	if p.pending != nil {
-		p.pending.cancel()
-	}
 	poll := seconds(device.Interval)
 	if poll <= 0 {
 		poll = 5 * time.Second // as RFC 8628 has it for a device that is not told
+	}
+	if p.pending != nil {
+		p.pending.cancel()
 	}
 	// The wait outlasts the request that started it.
 	waiting, cancel := context.WithTimeout(context.Background(), seconds(device.Life))

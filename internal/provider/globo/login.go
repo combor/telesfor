@@ -3,6 +3,7 @@ package globo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -18,7 +19,12 @@ import (
 // apps for TV sets send their users to.
 const activationURL = "https://globoplay.globo.com/ativar"
 
-const codeExpired = "The code expired before it was entered."
+const (
+	codeExpired = "The code expired before it was entered."
+	unsaved     = "The sign-in could not be saved, so it will not outlast a restart of telesfor."
+)
+
+var errExpired = errors.New("the sign-in has expired: sign in again on telesfor's settings page")
 
 // account is a sign-in and the channels it gives, as kept in the store.
 type account struct {
@@ -29,6 +35,7 @@ type account struct {
 // pending is a code the user has yet to enter.
 type pending struct {
 	code    string
+	url     string // where to enter it
 	expires time.Time
 	cancel  context.CancelFunc
 }
@@ -63,7 +70,7 @@ func (p *Provider) SignIn(ctx context.Context) error {
 	}
 	// The wait outlasts the request that started it.
 	waiting, cancel := context.WithTimeout(context.Background(), p.codeLife)
-	wait := &pending{code: device.Code, expires: time.Now().Add(p.codeLife), cancel: cancel}
+	wait := &pending{code: device.Code, url: activationURL, expires: time.Now().Add(p.codeLife), cancel: cancel}
 	p.pending, p.problem = wait, ""
 	go p.await(waiting, wait, device.Token)
 	return nil
@@ -87,7 +94,7 @@ func (p *Provider) await(ctx context.Context, wait *pending, token string) {
 		p.account, p.expired = signedIn, false
 		if err := save(p.db, signedIn); err != nil {
 			slog.Error("globo: saving the sign-in", "err", err)
-			p.problem = "The sign-in could not be saved, so it will not outlast a restart of telesfor."
+			p.problem = unsaved
 		}
 	}
 	changed := p.changed
@@ -172,7 +179,7 @@ func (p *Provider) Login() provider.Login {
 	login := provider.Login{Problem: p.problem}
 	switch {
 	case p.pending != nil:
-		login.State, login.Code, login.URL, login.Expires = provider.Pending, p.pending.code, activationURL, p.pending.expires
+		login.State, login.Code, login.URL, login.Expires = provider.Pending, p.pending.code, p.pending.url, p.pending.expires
 	case p.account == nil:
 	case p.expired:
 		login.State = provider.Expired

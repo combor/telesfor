@@ -17,8 +17,6 @@ import (
 )
 
 const (
-	codeExpired = "The code expired before it was entered."
-
 	// consents is what stands in the way of an account that has yet to
 	// accept them: WP plays it nothing, whatever it lists.
 	consents = "WP Pilot plays nothing until the account accepts its consents. Tick them at pilot.wp.pl/ustawienia/zgody-rodo/."
@@ -26,6 +24,11 @@ const (
 	// The cookies that WP's own site keeps a session in.
 	sessionID  = "netviapisessid"
 	sessionVal = "netviapisessval"
+)
+
+const (
+	codeExpired = "The code expired before it was entered."
+	unsaved     = "The sign-in could not be saved, so it will not outlast a restart of telesfor."
 )
 
 var errExpired = errors.New("the sign-in has expired: sign in again on telesfor's settings page")
@@ -77,12 +80,12 @@ func (p *Provider) SignIn(ctx context.Context) error {
 		p.problem = "WP gave no code to sign in with. telesfor's log has the reason."
 		return fmt.Errorf("wppilot: asking for a sign-in code: %w", err)
 	}
-	if p.pending != nil {
-		p.pending.cancel()
-	}
 	// WP names the page without saying how to reach it.
 	if !strings.Contains(device.URL, "://") {
 		device.URL = "https://" + device.URL
+	}
+	if p.pending != nil {
+		p.pending.cancel()
 	}
 	// The wait outlasts the request that started it.
 	waiting, cancel := context.WithTimeout(context.Background(), p.codeLife)
@@ -110,7 +113,7 @@ func (p *Provider) await(ctx context.Context, wait *pending) {
 		p.account, p.expired = signedIn, false
 		if err := save(p.db, signedIn); err != nil {
 			slog.Error("wppilot: saving the sign-in", "err", err)
-			p.problem = "The sign-in could not be saved, so it will not outlast a restart of telesfor."
+			p.problem = unsaved
 		}
 	}
 	changed := p.changed
@@ -154,7 +157,7 @@ func (p *Provider) authorize(ctx context.Context, code string) (*account, string
 		case answer.refused == "code_not_exists":
 			return nil, codeExpired
 		case answer.status == http.StatusTooManyRequests || answer.status >= http.StatusInternalServerError:
-			// WP's trouble, not the code's.
+			// WP is busy, which says nothing about the code.
 		default:
 			return nil, "WP refused the sign-in: " + strings.TrimSpace(http.StatusText(answer.status)+" "+answer.refused) + "."
 		}

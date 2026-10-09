@@ -32,7 +32,7 @@ flowchart LR
 
 | Package | Job |
 |---|---|
-| `internal/provider` | The contract every TV source implements. |
+| `internal/provider` | The contract every TV source implements, and helpers they share. |
 | `internal/provider/tvp` | TVP channels, guide and stream URLs. |
 | `internal/provider/globo` | Globoplay's sign-in, channels, guide and stream URLs. |
 | `internal/provider/ebc` | EBC's channels and streams, and TV Brasil's guide. |
@@ -172,7 +172,19 @@ type Provider interface {
 ```
 
 Each stream returns a `Source` with its URL and the HTTP client used to fetch
-it.
+it. A client whose requests need changing, to name a browser or to carry a
+pass, wraps the provider's transport with `httpclient.Wrap`, so that its
+segments keep their own connections. A stream whose addresses carry a pass
+that runs out keeps it good with `provider.Pass`.
+
+Package `provider` has the helpers that providers share. A guide with gaps
+fills them with `provider.Fill`, which puts in the channel's name an hour at a
+time: Plex offers a channel by what is on it, so a gap would leave nothing to
+pick. A guide that gives only start times ends its programmes with
+`provider.UntilNext`.
+
+A provider names itself once in its errors: its helpers leave the name out,
+and each exported method puts it in front, as in `tvp: listing channels: …`.
 
 Then add a row for it to `sources` in `cmd/telesfor/main.go`. The row has a
 key, which names the `-<key>-proxy` flag and `TELESFOR_<KEY>_PROXY`, and says
@@ -184,7 +196,9 @@ It also says how many streams the provider plays at once, if fewer than four.
 
 The tuner comes with a tab on the settings page, which shows its proxy. A
 provider that implements `provider.Account` also has its sign-in there, by a
-code the user enters on the provider's own site.
+code the user enters on the provider's own site. It keeps the account across
+restarts with `store.Get`, `store.Put` and `store.Delete`, in a bucket named
+for it.
 
 ## Tests
 

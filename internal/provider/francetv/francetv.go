@@ -495,7 +495,7 @@ func (p *Provider) stream(ctx context.Context, ch channel) (provider.Source, err
 
 	pass := passOf(at, unsigned)
 	client := *p.client
-	transport := &session{
+	client.Transport = &session{
 		RoundTripper: p.client.Transport,
 		renewed: func(ctx context.Context) string {
 			if signed, err := p.sign(ctx, handed); err == nil {
@@ -510,12 +510,6 @@ func (p *Provider) stream(ctx context.Context, ch channel) (provider.Source, err
 		pass:   pass,
 		signed: time.Now(),
 	}
-	// A stream handed out as the playlist of its one quality has no master
-	// to answer with: ffmpeg is to read that playlist anew as it grows.
-	if quality != "" {
-		transport.master, transport.playlist = at, master
-	}
-	client.Transport = transport
 	return provider.Source{URL: signed, Client: &client}, nil
 }
 
@@ -640,9 +634,7 @@ func (p *Provider) playlist(ctx context.Context, ch channel, address *url.URL) (
 }
 
 // session is the transport of a stream's HTTP client, which the stream is
-// read through. It answers for the master playlist with the one that was read
-// when the stream was looked at, which saves asking for it again, and keeps
-// the stream's pass good.
+// read through. It keeps the stream's pass good.
 //
 // The pass is in the path of every address of the stream, and lasts six
 // hours. The stream goes on being asked for with the one it started with, so
@@ -650,10 +642,8 @@ func (p *Provider) playlist(ctx context.Context, ch channel, address *url.URL) (
 // after it then go with.
 type session struct {
 	http.RoundTripper
-	master   *url.URL                     // where the master playlist is; nil if the stream has none
-	playlist string                       // what to answer there
-	renewed  func(context.Context) string // gets a new pass, or none
-	rest     time.Duration                // how long a pass is left alone: one this new is not refused for its age
+	renewed func(context.Context) string // gets a new pass, or none
+	rest    time.Duration                // how long a pass is left alone: one this new is not refused for its age
 
 	mu     sync.Mutex
 	first  string    // the pass in the addresses ffmpeg asks for; empty if they carry none
@@ -682,20 +672,6 @@ func (s *segmentSession) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func (s *session) roundTrip(req *http.Request, transport http.RoundTripper) (*http.Response, error) {
-	if s.master != nil && req.URL.Host == s.master.Host && req.URL.Path == s.master.Path {
-		return &http.Response{
-			Status:        "200 OK",
-			StatusCode:    http.StatusOK,
-			Proto:         "HTTP/1.1",
-			ProtoMajor:    1,
-			ProtoMinor:    1,
-			Header:        http.Header{"Content-Type": {"application/vnd.apple.mpegurl"}},
-			Body:          io.NopCloser(strings.NewReader(s.playlist)),
-			ContentLength: int64(len(s.playlist)),
-			Request:       req,
-		}, nil
-	}
-
 	isPlaylist := strings.HasSuffix(req.URL.Path, ".m3u8")
 	send := func(pass string) (*http.Response, error) {
 		out := req.Clone(req.Context())

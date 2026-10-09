@@ -388,8 +388,8 @@ func TestStream(t *testing.T) {
 		return resp.StatusCode, string(body)
 	}
 
-	// Every quality, for the remuxer to choose from, without asking again.
-	if status, playlist := fetch("index.m3u8?hdnea=short"); status != http.StatusOK || playlist != master || f.fetched["index.m3u8"] != 1 {
+	// Every quality, for the remuxer to choose from.
+	if status, playlist := fetch("index.m3u8?hdnea=short"); status != http.StatusOK || playlist != master || f.fetched["index.m3u8"] != 2 {
 		t.Errorf("the master playlist: %d after %d fetches\n%s\nwant\n%s", status, f.fetched["index.m3u8"], playlist, master)
 	}
 	// The key by its path, for ffmpeg to ask the relay for it.
@@ -510,8 +510,9 @@ func TestCancellableSession(t *testing.T) {
 	}
 }
 
-// A stream that is handed out as the playlist of its one quality has no
-// master to keep: ffmpeg reads the playlist anew as the stream goes on.
+// A stream that is handed out as the playlist of its one quality is that
+// playlist as it stands when asked for: ffmpeg reads it anew as the stream
+// goes on.
 func TestStreamOfOneQuality(t *testing.T) {
 	f, p := serve(t)
 	f.index = head + segment

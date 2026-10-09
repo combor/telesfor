@@ -69,7 +69,7 @@ func main() {
 		"address to listen on (env TELESFOR_LISTEN)")
 	proxies := make([]string, len(sources))
 	for i, s := range sources {
-		flag.StringVar(&proxies[i], s.flag(), os.Getenv(s.env()),
+		flag.StringVar(&proxies[i], s.key+"-proxy", os.Getenv(s.env()),
 			"HTTP proxy for "+s.about+" (env "+s.env()+")")
 	}
 	data := flag.String("data", cmp.Or(os.Getenv("TELESFOR_DATA"), dataDir()),
@@ -165,13 +165,11 @@ func settings(listen, data string, debug bool) []web.Setting {
 	}
 }
 
-func (s source) flag() string { return s.key + "-proxy" }
-
 func (s source) env() string { return "TELESFOR_" + strings.ToUpper(s.key) + "_PROXY" }
 
 // proxySetting is the source's proxy, for its tab of the settings page.
 func (s source) proxySetting(proxy string) web.Setting {
-	setting := web.Setting{Name: "Proxy", State: "Not set", Flag: "-" + s.flag(), Env: s.env()}
+	setting := web.Setting{Name: "Proxy", State: "Not set", Flag: "-" + s.key + "-proxy", Env: s.env()}
 	if u, err := url.Parse(proxy); err == nil && u.Host != "" {
 		u.User = nil // the page is open to whoever can reach the tuner
 		setting.Value, setting.State = u.String(), ""

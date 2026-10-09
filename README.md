@@ -86,15 +86,15 @@ telesfor's [settings page](docs/usage.md#web-interface) at
 
 Each provider is a tuner of its own, with its own guide.
 
-| Provider | Tuner | XMLTV guide |
-|---|---|---|
-| TVP | `http://<telesfor-host>:5004` | `http://<telesfor-host>:5004/xmltv.xml` |
-| Globoplay | `http://<telesfor-host>:5004/globo` | `http://<telesfor-host>:5004/globo/xmltv.xml` |
-| EBC | `http://<telesfor-host>:5004/ebc` | `http://<telesfor-host>:5004/ebc/xmltv.xml` |
-| TV Cultura | `http://<telesfor-host>:5004/cultura` | `http://<telesfor-host>:5004/cultura/xmltv.xml` |
-| france.tv | `http://<telesfor-host>:5004/francetv` | `http://<telesfor-host>:5004/francetv/xmltv.xml` |
-| TF1+ | `http://<telesfor-host>:5004/tf1` | `http://<telesfor-host>:5004/tf1/xmltv.xml` |
-| WP Pilot | `http://<telesfor-host>:5004/wppilot` | `http://<telesfor-host>:5004/wppilot/xmltv.xml` |
+| Provider | Tuner | XMLTV guide | Channels from |
+|---|---|---|---|
+| TVP | `http://<telesfor-host>:5004` | `http://<telesfor-host>:5004/xmltv.xml` | 1 |
+| Globoplay | `http://<telesfor-host>:5004/globo` | `http://<telesfor-host>:5004/globo/xmltv.xml` | 1001 |
+| EBC | `http://<telesfor-host>:5004/ebc` | `http://<telesfor-host>:5004/ebc/xmltv.xml` | 2001 |
+| TV Cultura | `http://<telesfor-host>:5004/cultura` | `http://<telesfor-host>:5004/cultura/xmltv.xml` | 3001 |
+| france.tv | `http://<telesfor-host>:5004/francetv` | `http://<telesfor-host>:5004/francetv/xmltv.xml` | 4001 |
+| TF1+ | `http://<telesfor-host>:5004/tf1` | `http://<telesfor-host>:5004/tf1/xmltv.xml` | 5001 |
+| WP Pilot | `http://<telesfor-host>:5004/wppilot` | `http://<telesfor-host>:5004/wppilot/xmltv.xml` | 6001 |
 
 1. In Plex, open **Settings → Live TV & DVR** and set up a new DVR.
 2. Add a provider's tuner manually by its address.
@@ -106,9 +106,7 @@ Each provider is a tuner of its own, with its own guide.
    with its own guide address.
 
 Your channels and guide are now available in Plex's **Live TV** section, in
-one list. Globoplay's channels are numbered from 1001, EBC's from 2001,
-TV Cultura's from 3001, france.tv's from 4001, TF1+'s from 5001 and WP
-Pilot's from 6001, so they follow TVP's.
+one list.
 
 ## Documentation
 

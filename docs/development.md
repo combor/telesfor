@@ -40,7 +40,8 @@ flowchart LR
 | `internal/provider/francetv` | France Télévisions' channels, guide and stream URLs. |
 | `internal/provider/tf1` | TF1+'s sign-in, channels, guide and stream URLs. |
 | `internal/provider/wppilot` | WP Pilot's sign-in, channels, guide and stream sessions. |
-| `internal/httpclient` | Connection pools that preserve the supplied HTTP transport settings. |
+| `internal/provider/providertest` | What the tests of providers share. Only tests import it. |
+| `internal/httpclient` | Keeps a stream's segments on HTTP/1.1 connections of their own, apart from a provider's other traffic. |
 | `internal/store` | The bbolt database that keeps sign-ins across restarts. |
 | `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy, startup alignment and the choice of quality. |
 | `internal/slowproxy` | A throttling proxy for trying telesfor on a slow connection. Not in the binary. |

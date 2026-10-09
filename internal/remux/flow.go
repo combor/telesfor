@@ -84,14 +84,16 @@ func (f *flow) fastest(from, to time.Time) (float64, bool) {
 // that at once with the first of it. What comes after goes to the flow.
 type counted struct {
 	io.ReadCloser
-	flow *flow
-	own  *flow // watched video only, for its remaining-time estimate
+	flow  *flow
+	own   *flow     // how fast it alone comes, for a segment of the picture that is watched
+	asked time.Time // when it was asked for
+	of    int64     // how much of it there is, in bytes: its Content-Length
 
 	mu    sync.Mutex
 	got   int64
 	first int64
 	began time.Time // when the first of it came; zero before
-	base  int64     // shared flow counter when this body began
+	base  int64     // how much the flow had counted then
 }
 
 func (c *counted) Read(p []byte) (int, error) {
@@ -115,28 +117,31 @@ func (c *counted) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// coming tells how the body is coming: how much has come, how much of that
-// at once, for how long it has been coming, and the recent rates of the whole
-// stream and this body. Before a complete sample exists, use bytes received
-// since the first read; a complete sample of zero still means a stall.
-func (c *counted) coming(now time.Time) (got, first int64, flowing time.Duration, speed, rate float64) {
+// coming tells how the body is coming, as the controller is told: how much
+// of how much has come, not counting what came at once with the first of it,
+// and how fast the whole stream and the body alone have been coming of late.
+// Until a half second of it has been timed in full, each speed is that of
+// what came after the first of it, over the time since. A half second timed
+// in full in which nothing came is a stall: no speed at all.
+func (c *counted) coming(now time.Time) coming {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	how := coming{of: c.of, took: now.Sub(c.asked)}
 	if c.began.IsZero() {
-		return 0, 0, 0, 0, 0
+		return how
 	}
 	// The half second just past, and the tenth that is not over yet.
 	from := now.Add(-(window + 1) * tenth)
 	if from.Before(c.began) {
 		from = c.began
 	}
-	flowing = now.Sub(c.began)
+	how.got, how.of, how.flow = c.got-c.first, c.of-c.first, now.Sub(c.began)
 	var sampled bool
-	if speed, sampled = c.flow.fastest(from, now); !sampled {
-		speed = transferRate(c.flow.bytes()-c.base, flowing)
+	if how.speed, sampled = c.flow.fastest(from, now); !sampled {
+		how.speed = transferRate(c.flow.bytes()-c.base, how.flow)
 	}
-	if rate, sampled = c.own.fastest(from, now); !sampled {
-		rate = transferRate(c.got-c.first, flowing)
+	if how.rate, sampled = c.own.fastest(from, now); !sampled {
+		how.rate = transferRate(c.got-c.first, how.flow)
 	}
-	return c.got, c.first, flowing, speed, rate
+	return how
 }

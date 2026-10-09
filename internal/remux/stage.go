@@ -307,7 +307,7 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 		refuse(w, req, file(wanted.uri), err)
 		return
 	}
-	body := &counted{ReadCloser: resp.Body, flow: &s.flow}
+	body := &counted{ReadCloser: resp.Body, flow: &s.flow, asked: asked, of: resp.ContentLength}
 	if watched {
 		body.own = &flow{}
 	}
@@ -330,7 +330,7 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 		body.Close()
 	}()
 	if watched {
-		go s.watch(l, body, resp.ContentLength, asked, wanted.length, fetched)
+		go s.watch(l, body, wanted.length, fetched)
 	}
 
 	if whole = whole && resp.ContentLength > 0 && resp.ContentLength <= maxSegment; whole {
@@ -372,7 +372,7 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 
 // watch follows a segment of the picture as it comes, until it has been
 // fetched, and changes quality if the controller says to give it up.
-func (s *stage) watch(l *leg, body *counted, of int64, asked time.Time, length time.Duration, fetched <-chan struct{}) {
+func (s *stage) watch(l *leg, body *counted, length time.Duration, fetched <-chan struct{}) {
 	var doubted time.Time // since when it has looked like one to give up
 	for {
 		select {
@@ -388,8 +388,8 @@ func (s *stage) watch(l *leg, body *counted, of int64, asked time.Time, length t
 		if waits {
 			continue
 		}
-		got, first, flowing, speed, rate := body.coming(time.Now())
-		how := coming{got: got - first, of: of - first, speed: speed, rate: rate, flow: flowing, took: time.Since(asked), length: length}
+		how := body.coming(time.Now())
+		how.length = length
 		if !doubted.IsZero() {
 			how.doubted = time.Since(doubted)
 		}

@@ -21,14 +21,15 @@ func TestProbeBeforeFiveCompleteBuckets(t *testing.T) {
 			f.add(25000, at) // picture
 			f.add(25000, at) // sound
 		}
-		body := &counted{flow: f, own: &flow{}, began: start, first: 4096, got: 4096 + 125000}
-		got, first, elapsed, speed, rate := body.coming(start.Add(test.probe))
-		if speed < 3e6 {
-			t.Errorf("at %v measured %.2f Mbps, losing the audio contribution", test.probe, speed/1e6)
+		body := &counted{flow: f, own: &flow{}, asked: start, of: 5 << 20, began: start, first: 4096, got: 4096 + 125000}
+		how := body.coming(start.Add(test.probe))
+		if how.speed < 3e6 {
+			t.Errorf("at %v measured %.2f Mbps, losing the audio contribution", test.probe, how.speed/1e6)
 		}
 		r := &route{}
 		c := newController("probe", franceLadder, r, func() (time.Duration, time.Duration, bool) { return 0, 0, false })
-		to, _, _, change := c.progress(c.start(), coming{got: got - first, of: 5 << 20, flow: elapsed, took: elapsed, speed: speed, rate: rate, length: 7680 * time.Millisecond})
+		how.length = 7680 * time.Millisecond
+		to, _, _, change := c.progress(c.start(), how)
 		if !change || c.ladder[to].height < 540 {
 			t.Errorf("at %v selected quality %d, want at least 540p", test.probe, to)
 		}
@@ -47,21 +48,22 @@ func TestProbeCountsBothTracks(t *testing.T) {
 	}
 	for _, elapsed := range []time.Duration{550 * time.Millisecond, 800 * time.Millisecond} {
 		now := start.Add(elapsed)
-		body := &counted{flow: f, own: &flow{}, began: start, first: 4096, got: 4096 + 64<<10}
-		got, first, flowing, speed, rate := body.coming(now)
-		if speed != 1.5e6 {
-			t.Fatalf("at %v measured %.0f bps, want audio and video together at 1.5 Mbps", elapsed, speed)
+		body := &counted{flow: f, own: &flow{}, asked: start, of: 5 << 20, began: start, first: 4096, got: 4096 + 64<<10}
+		how := body.coming(now)
+		if how.speed != 1.5e6 {
+			t.Fatalf("at %v measured %.0f bps, want audio and video together at 1.5 Mbps", elapsed, how.speed)
 		}
 		r := &route{}
 		c := newController("probe", franceLadder, r, func() (time.Duration, time.Duration, bool) { return 0, 0, false })
 		quality := c.start()
-		to, _, _, change := c.progress(quality, coming{got: got - first, of: 5 << 20, flow: flowing, took: elapsed, speed: speed, rate: rate, length: 7680 * time.Millisecond})
+		how.length = 7680 * time.Millisecond
+		to, _, _, change := c.progress(quality, how)
 		if !change || c.ladder[to].height != 216 {
 			t.Errorf("at %v selected quality %d (change %t), want 216p", elapsed, to, change)
 		}
 	}
 	body := &counted{flow: f, own: &flow{}, began: start, first: 4096, got: 4096 + 64<<10}
-	if _, _, _, speed, _ := body.coming(start.Add(2 * time.Second)); speed != 0 {
+	if speed := body.coming(start.Add(2 * time.Second)).speed; speed != 0 {
 		t.Errorf("a stalled stream measured %.0f bps, want zero", speed)
 	}
 }
@@ -77,7 +79,7 @@ func TestProbePartialFirstBucket(t *testing.T) {
 		f.add(50000, began.Add(time.Duration(i)*tenth))
 	}
 	body := &counted{flow: f, own: &flow{}, began: began, base: 1, first: 4096, got: 4096 + 250000}
-	if _, _, _, speed, _ := body.coming(began.Add(500 * time.Millisecond)); speed != 4e6 {
+	if speed := body.coming(began.Add(500 * time.Millisecond)).speed; speed != 4e6 {
 		t.Fatalf("partially covered first bucket measured %.2f Mbps, want 4 Mbps", speed/1e6)
 	}
 }

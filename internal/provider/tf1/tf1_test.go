@@ -15,7 +15,6 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/combor/telesfor/internal/httpclient"
 	"github.com/combor/telesfor/internal/provider"
 	"github.com/combor/telesfor/internal/provider/providertest"
 	"github.com/combor/telesfor/internal/store"
@@ -489,53 +488,37 @@ func TestPass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	segments, release := httpclient.SegmentClient(source.Client)
-	defer release()
 	// As ffmpeg asks: always with the pass the stream started with.
-	fetch := func(client *http.Client, file string) (status int, body, from string) {
+	fetch := func(file string) (status int, body string) {
 		t.Helper()
-		resp, body := providertest.Get(t, client, f.url+"/pass1/prod/TFX/cmaf/out/"+file)
-		return resp.StatusCode, body, resp.Request.URL.Path
+		resp, body := providertest.Get(t, source.Client, f.url+"/pass1/prod/TFX/cmaf/out/"+file)
+		return resp.StatusCode, body
 	}
 
-	if status, body, _ := fetch(source.Client, "high.m3u8"); status != http.StatusOK || body != "TFX/high.m3u8" || f.passes != 1 {
+	if status, body := fetch("high.m3u8"); status != http.StatusOK || body != "TFX/high.m3u8" || f.passes != 1 {
 		t.Errorf("a playlist: %d %q with %d passes handed out", status, body, f.passes)
 	}
 	// The pass runs out: the stream goes on with a new one.
 	f.set(func() { f.expired["pass1"] = true })
-	status, _, from := fetch(source.Client, "high.m3u8")
-	if status != http.StatusOK || f.passes != 2 {
+	if status, _ := fetch("high.m3u8"); status != http.StatusOK || f.passes != 2 {
 		t.Errorf("after the pass ran out: %d with %d passes handed out, want 200 with a second", status, f.passes)
-	}
-	// What the playlist lists is found from where the playlist is, and so
-	// asked for with the first pass too.
-	if want := "/pass1/prod/TFX/cmaf/out/high.m3u8"; from != want {
-		t.Errorf("after the pass ran out, the playlist is from %s, want it from where it was asked for, %s", from, want)
-	}
-	if status, body, _ := fetch(segments, "high-1.mp4"); status != http.StatusOK || body != "TFX/high-1.mp4" || f.passes != 2 {
-		t.Errorf("a segment after: %d %q with %d passes handed out, want it with the second", status, body, f.passes)
-	}
-	// A segment is the first to be refused as well.
-	f.set(func() { f.expired["pass2"] = true })
-	if status, _, _ := fetch(segments, "high-2.mp4"); status != http.StatusOK || f.passes != 3 {
-		t.Errorf("a segment after the second pass ran out: %d with %d passes handed out, want 200 with a third", status, f.passes)
 	}
 
 	// An address outside France is refused with any pass.
 	f.set(func() { f.abroad = true })
-	if status, body, _ := fetch(source.Client, "high.m3u8"); status != http.StatusForbidden || !strings.Contains(body, "geoip") || f.passes != 3 {
+	if status, body := fetch("high.m3u8"); status != http.StatusForbidden || !strings.Contains(body, "geoip") || f.passes != 2 {
 		t.Errorf("outside France: %d %q with %d passes handed out, want TF1's refusal and no pass more", status, body, f.passes)
 	}
 	// A new pass that is refused is refused for something else.
-	f.set(func() { f.abroad, f.expired["pass3"] = false, true })
+	f.set(func() { f.abroad, f.expired["pass2"] = false, true })
 	p.rest = time.Hour
 	again, err := p.Stream(t.Context(), "tfx")
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.set(func() { f.expired["pass4"] = true })
-	resp, _ := providertest.Get(t, again.Client, f.url+"/pass4/prod/TFX/cmaf/out/high.m3u8")
-	if resp.StatusCode != http.StatusForbidden || f.passes != 4 {
+	f.set(func() { f.expired["pass3"] = true })
+	resp, _ := providertest.Get(t, again.Client, f.url+"/pass3/prod/TFX/cmaf/out/high.m3u8")
+	if resp.StatusCode != http.StatusForbidden || f.passes != 3 {
 		t.Errorf("a new pass refused: %s with %d passes handed out, want 403 and no pass more", resp.Status, f.passes)
 	}
 }

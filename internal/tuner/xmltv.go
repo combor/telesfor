@@ -120,9 +120,22 @@ func (t *Tuner) currentGuide() *guide {
 // A fetch that fails leaves the guide there was, which Plex is given rather
 // than nothing, and is tried again sooner: see guideRetry.
 func (t *Tuner) keepFresh(ctx context.Context) {
-	retry := guideRetry
-	for {
-		wait, err := t.refreshGuide(ctx)
+	for retry := guideRetry; ; {
+		select {
+		case t.fetching <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		var wait time.Duration
+		if g := t.currentGuide(); g != nil {
+			wait = guideRefresh - time.Since(g.made) // fetched meanwhile, by a request or an earlier pass
+		}
+		var err error
+		if wait <= 0 {
+			wait = guideRefresh
+			_, err = t.fetchGuide(ctx)
+		}
+		<-t.fetching
 		switch {
 		case ctx.Err() != nil:
 			return
@@ -140,26 +153,6 @@ func (t *Tuner) keepFresh(ctx context.Context) {
 		case <-time.After(wait):
 		}
 	}
-}
-
-// refreshGuide fetches the guide unless one is still fresh, fetched meanwhile
-// by a request or an earlier pass. It returns how long until the next fetch.
-func (t *Tuner) refreshGuide(ctx context.Context) (time.Duration, error) {
-	select {
-	case t.fetching <- struct{}{}:
-	case <-ctx.Done():
-		return 0, ctx.Err()
-	}
-	defer func() { <-t.fetching }()
-	if g := t.currentGuide(); g != nil {
-		if age := time.Since(g.made); age < guideRefresh {
-			return guideRefresh - age, nil
-		}
-	}
-	if _, err := t.fetchGuide(ctx); err != nil {
-		return 0, err
-	}
-	return guideRefresh, nil
 }
 
 // fetchGuide asks the provider for the programmes of the whole lineup,

@@ -41,6 +41,12 @@ type stage struct {
 	server *http.Server
 	flow   flow // how fast audio and video have been coming
 
+	// The stage's lock guards the fields below and the tracks of every leg.
+	// It is held while a leg's ffmpeg starts, so that no handler finds a leg
+	// without one (see add), while the controller is told of a segment ffmpeg
+	// is given, and while the meter is asked whether the stream can start
+	// over: their locks are taken inside the stage's, never the other way
+	// round.
 	mu      sync.Mutex
 	legs    []*leg         // by their numbers, from 1; nil once nothing is to come of one
 	current *leg           // the one whose ffmpeg is being listened to
@@ -323,7 +329,9 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 		came = time.Now()
 		spool.close(err)
 	}()
-	defer func() { // not before the fetch is over, which is still reading
+	// The fetch may still be reading the body: it is stopped, and waited for,
+	// before the body is closed.
+	defer func() {
 		cancel()
 		spool.close(io.ErrClosedPipe)
 		<-fetched
@@ -371,7 +379,9 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 }
 
 // watch follows a segment of the picture as it comes, until it has been
-// fetched, and changes quality if the controller says to give it up.
+// fetched, and changes quality if the controller says to give it up. It may
+// still change quality just after the segment has been fetched: change
+// ignores a leg that is no longer current.
 func (s *stage) watch(l *leg, body *counted, length time.Duration, fetched <-chan struct{}) {
 	var doubted time.Time // since when it has looked like one to give up
 	for {

@@ -26,7 +26,7 @@ type leg struct {
 	failed error              // why its ffmpeg did not start
 }
 
-// track is the picture or the sound of a leg.
+// track is the picture or the sound of a leg. The stage's lock guards it.
 type track struct {
 	list    playlist // as last fetched
 	from    int64    // the first segment of the leg; -1 until its playlist has been read

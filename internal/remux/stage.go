@@ -272,9 +272,9 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 		http.NotFound(w, req)
 		return
 	}
-	// begin notes that ffmpeg is to get the segment now, unless the leg has
+	// give notes that ffmpeg is to get the segment now, unless the leg has
 	// ended before it meanwhile.
-	begin := func() bool {
+	give := func() bool {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if !t.within(seq) {
@@ -334,14 +334,14 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 	}
 
 	if whole = whole && resp.ContentLength > 0 && resp.ContentLength <= maxSegment; whole {
-		if err := spool.wait(); err != nil || !begin() {
+		if err := spool.wait(); err != nil || !give() {
 			if err != nil && l.flying.Err() == nil && req.Context().Err() == nil {
 				slog.Warn("relay: upstream transfer failed", "file", file(wanted.uri), "err", err)
 			}
 			http.NotFound(w, req) // nothing of it has reached ffmpeg, which goes on to the next
 			return
 		}
-	} else if !keep() || !begin() { // given up, or the leg ends before it
+	} else if !keep() || !give() { // given up, or the leg ends before it
 		http.NotFound(w, req)
 		return
 	}

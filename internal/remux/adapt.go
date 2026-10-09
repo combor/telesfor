@@ -200,11 +200,13 @@ type controller struct {
 
 	mu sync.Mutex
 
-	quality   int        // the one being played
-	changedAt time.Time  // when it last changed
-	rose      time.Time  // when it last stepped up, if it has not stepped down since
-	standing  []standing // of each quality
-	warned    bool       // of the lowest quality being too much
+	quality   int             // the one being played
+	changedAt time.Time       // when it last changed
+	rose      time.Time       // when it last stepped up, if it has not stepped down since
+	barred    []time.Time     // until when each quality is not stepped up to
+	bars      []time.Duration // for how long each was last left alone
+	unfit     []time.Time     // until when each is not played at all: it would not play
+	warned    bool            // of the lowest quality being too much
 
 	fast   average       // of the speed, in bits a second, over the latest few segments
 	slow   average       // over as long as a step up waits
@@ -222,17 +224,11 @@ type controller struct {
 	dry       bool          // it is now
 }
 
-// standing is how long a quality that failed is left alone.
-type standing struct {
-	barred    time.Time     // until when it is not stepped up to
-	unfit     time.Time     // until when it is not played at all: it would not play
-	leftAlone time.Duration // for how long it was last left alone
-}
-
 func newController(name string, l *ladder, r *route, sent func() (time.Duration, time.Duration, bool)) *controller {
 	return &controller{
 		name: name, ladder: l.qualities, route: r, now: time.Now, sent: sent, hold: plexHold, calm: calm, log: slog.Default(),
-		fast: average{half: 2}, slow: average{half: 6}, trim: -1, standing: make([]standing, len(l.qualities)),
+		fast: average{half: 2}, slow: average{half: 6}, trim: -1,
+		barred: make([]time.Time, len(l.qualities)), bars: make([]time.Duration, len(l.qualities)), unfit: make([]time.Time, len(l.qualities)),
 	}
 }
 
@@ -293,7 +289,7 @@ func (c *controller) budget(speed float64) float64 {
 
 // plays tells whether a quality is one to choose: not for a while after it
 // would not play.
-func (c *controller) plays(quality int) bool { return !c.now().Before(c.standing[quality].unfit) }
+func (c *controller) plays(quality int) bool { return !c.now().Before(c.unfit[quality]) }
 
 // fits returns the best quality that takes no more than a share of a budget,
 // or the lowest if none does.
@@ -482,7 +478,7 @@ func (c *controller) fetched(quality int, a arrival) (to int, why string, ok boo
 		c.full = max(c.full, reserve)
 	}
 	if !c.rose.IsZero() && now.Sub(c.rose) >= settled {
-		c.standing[quality].leftAlone = 0
+		c.bars[quality] = 0
 	}
 
 	if c.tooSlow(c.recent, reserve) {
@@ -512,7 +508,7 @@ func (c *controller) fetched(quality int, a arrival) (to int, why string, ok boo
 		next++
 	}
 	// With the newest segment in, the reserve is as large as it gets.
-	if next < len(c.ladder) && a.newest && c.full > 0 && reserve >= c.full*2/3 && !now.Before(c.standing[next].barred) &&
+	if next < len(c.ladder) && a.newest && c.full > 0 && reserve >= c.full*2/3 && !now.Before(c.barred[next]) &&
 		c.takes(next) <= startShare*c.budget(c.speed()) &&
 		quiet && now.Sub(c.changedAt) >= c.calmPeriod() {
 		return next, "the connection has room for more", true
@@ -557,9 +553,8 @@ func (c *controller) changed(to int, why string) {
 	defer c.mu.Unlock()
 	now, from := c.now(), c.quality
 	if to < from && !c.rose.IsZero() && now.Sub(c.rose) < c.calmPeriod() {
-		s := &c.standing[from]
-		s.leftAlone = min(max(2*s.leftAlone, bar), barMost)
-		s.barred = now.Add(s.leftAlone)
+		c.bars[from] = min(max(2*c.bars[from], bar), barMost)
+		c.barred[from] = now.Add(c.bars[from])
 	}
 	c.rose = time.Time{}
 	if to > from {
@@ -576,8 +571,7 @@ func (c *controller) changed(to int, why string) {
 func (c *controller) unfits(quality int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	s := &c.standing[quality]
-	s.leftAlone = min(max(2*s.leftAlone, bar), barMost)
-	s.unfit = c.now().Add(s.leftAlone)
+	c.bars[quality] = min(max(2*c.bars[quality], bar), barMost)
+	c.unfit[quality] = c.now().Add(c.bars[quality])
 	c.rose = time.Time{} // a step up to it was no trial of the connection
 }

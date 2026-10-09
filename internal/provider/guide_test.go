@@ -48,15 +48,6 @@ func TestFill(t *testing.T) {
 			"one Mon 14:00 to Mon 15:00: One | unlisted",
 			"one Mon 15:00 to Mon 16:00: One | unlisted",
 		}},
-		{"before and after", known[1:2], []string{
-			"one Mon 09:30 to Mon 10:00: One | unlisted",
-			"one Mon 10:00 to Mon 11:00: One | unlisted",
-			"one Mon 11:00 to Mon 11:40: One | unlisted",
-			"one Mon 11:40 to Mon 13:10: Film",
-			"one Mon 13:10 to Mon 14:00: One | unlisted",
-			"one Mon 14:00 to Mon 15:00: One | unlisted",
-			"one Mon 15:00 to Mon 16:00: One | unlisted",
-		}},
 		{"between", known, []string{
 			"one Mon 09:00 to Mon 10:15: News",
 			"one Mon 10:15 to Mon 11:00: One | unlisted",

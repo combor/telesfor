@@ -557,7 +557,9 @@ func (c *controller) changed(to int, why string) {
 	defer c.mu.Unlock()
 	now, from := c.now(), c.quality
 	if to < from && !c.rose.IsZero() && now.Sub(c.rose) < c.calmPeriod() {
-		c.standing[from].barred = c.leaveAlone(from, now)
+		s := &c.standing[from]
+		s.leftAlone = min(max(2*s.leftAlone, bar), barMost)
+		s.barred = now.Add(s.leftAlone)
 	}
 	c.rose = time.Time{}
 	if to > from {
@@ -574,12 +576,8 @@ func (c *controller) changed(to int, why string) {
 func (c *controller) unfits(quality int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.standing[quality].unfit = c.leaveAlone(quality, c.now())
-	c.rose = time.Time{} // a step up to it was no trial of the connection
-}
-
-func (c *controller) leaveAlone(quality int, now time.Time) time.Time {
 	s := &c.standing[quality]
 	s.leftAlone = min(max(2*s.leftAlone, bar), barMost)
-	return now.Add(s.leftAlone)
+	s.unfit = c.now().Add(s.leftAlone)
+	c.rose = time.Time{} // a step up to it was no trial of the connection
 }

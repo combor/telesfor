@@ -135,20 +135,25 @@ func (r *relay) qualities(ctx context.Context, manifest string) *ladder {
 	return nil
 }
 
+// keptAt returns the kept manifest if it was found at an address, and keeps it
+// no longer: ffmpeg asks for it once.
+func (r *relay) keptAt(address string) *kept {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	kept := r.kept
+	if kept == nil || kept.address != address {
+		return nil
+	}
+	r.kept = nil
+	return kept
+}
+
 // fetch answers a request to a twin with the same path fetched from server.
 func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 	began := time.Now()
 	name := file(req.URL) // for the log: the rest of the path may carry the stream's token
-
-	r.mu.Lock()
-	kept := r.kept
-	if kept != nil && kept.address == server+req.URL.RequestURI() {
-		r.kept = nil
-	} else {
-		kept = nil
-	}
-	r.mu.Unlock()
-	if kept != nil {
+	address := server + req.URL.RequestURI()
+	if kept := r.keptAt(address); kept != nil {
 		if kept.kind != "" {
 			w.Header().Set("Content-Type", kept.kind)
 		}
@@ -159,7 +164,7 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 
 	// Whatever upstream answers is passed on as it is, a refusal included: the
 	// twin stands in for the server.
-	fetch, err := http.NewRequestWithContext(req.Context(), http.MethodGet, server+req.URL.RequestURI(), nil)
+	fetch, err := http.NewRequestWithContext(req.Context(), http.MethodGet, address, nil)
 	if err != nil {
 		http.Error(w, "bad upstream URL", http.StatusBadGateway)
 		return

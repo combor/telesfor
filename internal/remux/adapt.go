@@ -3,6 +3,7 @@ package remux
 import (
 	"log/slog"
 	"math"
+	"slices"
 	"sync"
 	"time"
 )
@@ -340,6 +341,25 @@ func (c *controller) reserve() time.Duration {
 	return reserve
 }
 
+// littleLeft tells whether little of the reserve is left: under a third of the
+// most it has been. mostLeft tells whether most of it is: two thirds at least.
+// Until the head start is sent, neither is so: there is no telling.
+func (c *controller) littleLeft(reserve time.Duration) bool { return c.full > 0 && reserve < c.full/3 }
+func (c *controller) mostLeft(reserve time.Duration) bool   { return c.full > 0 && reserve >= c.full*2/3 }
+
+// downShare is how much of the speed a quality may take to be stepped down
+// to: less when little of the reserve is left, for it has to grow again.
+func (c *controller) downShare(reserve time.Duration) float64 {
+	if c.littleLeft(reserve) {
+		return rushShare
+	}
+	return holdShare
+}
+
+// calmPeriod is how long calm lasts on this stream: six of its segments at
+// least. See calm.
+func (c *controller) calmPeriod() time.Duration { return max(c.calm, calmSegments*c.length) }
+
 // coming is how a segment is coming, while ffmpeg waits for it.
 type coming struct {
 	got, of int64         // how much of how much has come, not counting what came at once with the first of it
@@ -388,14 +408,10 @@ func (c *controller) progress(quality int, s coming) (to int, why string, doubt,
 		reserve := c.reserve()
 		left := time.Duration(float64(s.of-s.got) * 8 / max(s.rate, 1) * float64(time.Second))
 		// As it would be judged if it came now, and counted for the reserve.
-		c.recent = append(c.recent, fetch{s.length, s.took})
-		slow := s.took > s.length && c.tooSlow(reserve+s.length)
-		c.recent = c.recent[:len(c.recent)-1]
+		recent := append(slices.Clone(c.recent), fetch{s.length, s.took})
 		switch {
-		case slow:
-			if reserve+s.length >= c.full/3 {
-				share = holdShare
-			}
+		case s.took > s.length && c.tooSlow(recent, reserve+s.length):
+			share = c.downShare(reserve + s.length)
 			speed = min(speed, c.speed())
 			why = "its segments take longer to come than to play"
 		case s.took+left > s.length && left > reserve-handover:
@@ -466,18 +482,14 @@ func (c *controller) fetched(quality int, a arrival) (to int, why string, ok boo
 		c.bars[quality] = 0
 	}
 
-	if c.tooSlow(reserve) {
-		share := holdShare
-		if c.full > 0 && reserve < c.full/3 {
-			share = rushShare
-		}
+	if c.tooSlow(c.recent, reserve) {
 		// The averages take a while to come down. The segment that has just
 		// come slowly tells where to: as far down as it takes, in one step.
 		speed := c.speed()
 		if timed && latest.slow() {
 			speed = min(speed, seen)
 		}
-		if to, ok = c.below(c.fits(share, c.budget(speed))); ok {
+		if to, ok = c.below(c.fits(c.downShare(reserve), c.budget(speed))); ok {
 			return to, "its segments take longer to come than to play", true
 		}
 		if !c.warned {
@@ -487,7 +499,7 @@ func (c *controller) fetched(quality int, a arrival) (to int, why string, ok boo
 		}
 		return 0, "", false
 	}
-	quiet := now.Sub(c.slowAt) >= max(c.calm, calmSegments*length)
+	quiet := now.Sub(c.slowAt) >= c.calmPeriod()
 	if c.warned && quiet {
 		c.warned = false
 	}
@@ -497,9 +509,9 @@ func (c *controller) fetched(quality int, a arrival) (to int, why string, ok boo
 		next++
 	}
 	// With the newest segment in, the reserve is as large as it gets.
-	if next < len(c.ladder) && a.newest && c.full > 0 && reserve >= c.full*2/3 && !now.Before(c.barred[next]) &&
+	if next < len(c.ladder) && a.newest && c.mostLeft(reserve) && !now.Before(c.barred[next]) &&
 		c.takes(next) <= startShare*c.budget(c.speed()) &&
-		quiet && now.Sub(c.changedAt) >= max(c.calm, calmSegments*length) {
+		quiet && now.Sub(c.changedAt) >= c.calmPeriod() {
 		return next, "the connection has room for more", true
 	}
 	return 0, "", false
@@ -514,23 +526,23 @@ func (c *controller) holds() bool {
 	return c.full > 0
 }
 
-// tooSlow tells whether the segments of the quality being played come too
-// slowly to go on with it. How much it takes to say so depends on the
-// reserve: with most of it left, the latest segments together must have taken
+// tooSlow tells whether recent, the latest segments of the quality being
+// played, come too slowly to go on with it. How much it takes to say so
+// depends on the reserve: with most of it left, they must together have taken
 // longer to come than they play, so that one slow segment changes nothing.
 // With less, two slow ones in a row, and with little, a single one.
-func (c *controller) tooSlow(reserve time.Duration) bool {
-	n := len(c.recent)
+func (c *controller) tooSlow(recent []fetch, reserve time.Duration) bool {
+	n := len(recent)
 	switch {
 	case n == 0:
 		return false
-	case c.full > 0 && reserve < c.full/3:
-		return c.recent[n-1].slow()
-	case c.full == 0 || reserve < c.full*2/3:
-		return n >= 2 && c.recent[n-1].slow() && c.recent[n-2].slow()
+	case c.littleLeft(reserve):
+		return recent[n-1].slow()
+	case !c.mostLeft(reserve):
+		return n >= 2 && recent[n-1].slow() && recent[n-2].slow()
 	}
 	var all fetch
-	for _, f := range c.recent {
+	for _, f := range recent {
 		all.length, all.took = all.length+f.length, all.took+f.took
 	}
 	return n >= calmSegments/2 && all.slow()
@@ -541,7 +553,7 @@ func (c *controller) changed(to int, why string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now, from := c.now(), c.quality
-	if to < from && !c.rose.IsZero() && now.Sub(c.rose) < max(c.calm, calmSegments*c.length) {
+	if to < from && !c.rose.IsZero() && now.Sub(c.rose) < c.calmPeriod() {
 		c.bars[from] = min(max(2*c.bars[from], bar), barMost)
 		c.barred[from] = now.Add(c.bars[from])
 	}

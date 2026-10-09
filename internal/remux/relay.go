@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -116,11 +117,7 @@ func (r *relay) local(upstream *url.URL) (string, error) {
 // manifest is kept for ffmpeg, which is about to ask for it: once, as a live
 // playlist is another the next time.
 func (r *relay) qualities(ctx context.Context, manifest string) *ladder {
-	fetch, err := http.NewRequestWithContext(ctx, http.MethodGet, manifest, nil)
-	if err != nil {
-		return nil
-	}
-	resp, err := r.direct.Do(fetch)
+	resp, err := ask(ctx, r.direct, manifest, "")
 	if err != nil {
 		return nil // ffmpeg will meet the same, and Copy will say so
 	}
@@ -141,7 +138,7 @@ func (r *relay) qualities(ctx context.Context, manifest string) *ladder {
 // fetch answers a request to a twin with the same path fetched from server.
 func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 	began := time.Now()
-	file := path.Base(req.URL.Path) // for the log: the rest of the path may carry the stream's token
+	name := file(req.URL) // for the log: the rest of the path may carry the stream's token
 
 	r.mu.Lock()
 	kept := r.kept
@@ -160,6 +157,8 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 		return
 	}
 
+	// Whatever upstream answers is passed on as it is, a refusal included: the
+	// twin stands in for the server.
 	fetch, err := http.NewRequestWithContext(req.Context(), http.MethodGet, server+req.URL.RequestURI(), nil)
 	if err != nil {
 		http.Error(w, "bad upstream URL", http.StatusBadGateway)
@@ -170,18 +169,14 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 	}
 	resp, err := r.client.Do(fetch)
 	if err != nil {
-		// A cancelled request only means the stream was closed. For the rest,
 		// Unwrap drops the URL, and with it the stream's token, from the log.
-		if req.Context().Err() == nil {
-			slog.Warn("relay: upstream request failed", "file", file, "err", errors.Unwrap(err))
-		}
-		http.Error(w, "upstream request failed", http.StatusBadGateway)
+		refuse(w, req, name, errors.Unwrap(err))
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		slog.Warn("relay: upstream refused", "file", file, "status", resp.Status)
+		slog.Warn("relay: upstream refused", "file", name, "status", resp.Status)
 	}
 	if target, err := resp.Location(); err == nil { // a redirect
 		location, err := r.local(target)
@@ -199,14 +194,14 @@ func (r *relay) fetch(w http.ResponseWriter, req *http.Request, server string) {
 	size, err := r.pass(w, resp)
 	if err != nil {
 		if req.Context().Err() == nil {
-			slog.Warn("relay: upstream transfer failed", "file", file, "err", err)
+			slog.Warn("relay: upstream transfer failed", "file", name, "err", err)
 		}
 		// Cutting the connection tells ffmpeg that the file is incomplete.
 		// Ending the response normally would pass the part off as the whole.
 		panic(http.ErrAbortHandler)
 	}
 	r.count(playlist.Bytes())
-	slog.Debug("relay: fetched", "file", file, "status", resp.StatusCode, "bytes", size, "took", time.Since(began).Round(time.Millisecond))
+	slog.Debug("relay: fetched", "file", name, "status", resp.StatusCode, "bytes", size, "took", time.Since(began).Round(time.Millisecond))
 }
 
 // count notes whether a playlist holds fewer segments than the head start
@@ -216,6 +211,46 @@ func (r *relay) count(playlist []byte) {
 	if segments := bytes.Count(playlist, []byte("#EXTINF")); segments > 0 {
 		r.short.Store(segments < headStart)
 	}
+}
+
+// refusal is the status of an answer other than 200.
+type refusal int
+
+func (r refusal) Error() string { return strconv.Itoa(int(r)) + " " + http.StatusText(int(r)) }
+
+// ask asks upstream for a file, or the part of it that byteRange names if that
+// is not "". An answer of 400 or over is a refusal. Its errors leave out the
+// URL, which may carry the stream's token.
+func ask(ctx context.Context, client *http.Client, address, byteRange string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	if err != nil {
+		return nil, errors.New("bad upstream URL")
+	}
+	if byteRange != "" {
+		req.Header.Set("Range", byteRange)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, errors.Unwrap(err)
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		resp.Body.Close()
+		return nil, refusal(resp.StatusCode)
+	}
+	return resp, nil
+}
+
+// refuse answers ffmpeg for what could not be fetched, the way upstream
+// answered if it did.
+func refuse(w http.ResponseWriter, req *http.Request, name string, err error) {
+	status := http.StatusBadGateway
+	if refused, ok := err.(refusal); ok {
+		status = int(refused)
+		slog.Warn("relay: upstream refused", "file", name, "status", refused.Error())
+	} else if req.Context().Err() == nil { // a cancelled request only means that ffmpeg has gone
+		slog.Warn("relay: upstream request failed", "file", name, "err", err)
+	}
+	http.Error(w, "upstream request failed", status)
 }
 
 // passHeaders starts the answer to ffmpeg the way upstream answered.

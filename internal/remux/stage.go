@@ -2,7 +2,6 @@ package remux
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -48,11 +47,6 @@ type stage struct {
 	keys    []*url.URL     // the keys and init sections of the playlists, by the numbers ffmpeg asks for them with
 	numbers map[string]int // those numbers, by address
 }
-
-// refusal is the status of an answer other than 200.
-type refusal int
-
-func (r refusal) Error() string { return strconv.Itoa(int(r)) + " " + http.StatusText(int(r)) }
 
 // perform starts a stage for the stream that the relay is for.
 func (r *relay) perform(l *ladder, ctl *controller, gauge *meter, start func(*leg) error) (*stage, error) {
@@ -142,7 +136,7 @@ func (s *stage) playlist(w http.ResponseWriter, req *http.Request, video bool) {
 			l.stop()
 		}
 		if err != nil {
-			s.refuse(w, req, file(address), err)
+			refuse(w, req, file(address), err)
 		} else {
 			http.NotFound(w, req)
 		}
@@ -229,13 +223,9 @@ func (s *stage) playlist(w http.ResponseWriter, req *http.Request, video bool) {
 // read fetches a playlist.
 func (s *stage) read(ctx context.Context, address *url.URL) (playlist, error) {
 	began := time.Now()
-	fetch, err := http.NewRequestWithContext(ctx, http.MethodGet, address.String(), nil)
+	resp, err := ask(ctx, s.relay.direct, address.String(), "")
 	if err != nil {
 		return playlist{}, err
-	}
-	resp, err := s.relay.direct.Do(fetch)
-	if err != nil {
-		return playlist{}, errors.Unwrap(err) // without the URL, which may carry the stream's token
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -247,39 +237,6 @@ func (s *stage) read(ctx context.Context, address *url.URL) (playlist, error) {
 	}
 	slog.Debug("relay: fetched", "file", file(address), "status", resp.StatusCode, "bytes", len(body), "took", time.Since(began).Round(time.Millisecond))
 	return parsePlaylist(string(body), resp.Request.URL) // after redirects
-}
-
-// refuse answers ffmpeg for what could not be fetched, the way upstream
-// answered if it did.
-func (s *stage) refuse(w http.ResponseWriter, req *http.Request, name string, err error) {
-	status := http.StatusBadGateway
-	if refused, ok := err.(refusal); ok {
-		status = int(refused)
-		slog.Warn("relay: upstream refused", "file", name, "status", refused.Error())
-	} else if req.Context().Err() == nil { // a cancelled request only means that ffmpeg has gone
-		slog.Warn("relay: upstream request failed", "file", name, "err", err)
-	}
-	http.Error(w, "upstream request failed", status)
-}
-
-// get asks upstream for a file that ffmpeg asks for.
-func (s *stage) get(ctx context.Context, client *http.Client, req *http.Request, address *url.URL) (*http.Response, error) {
-	fetch, err := http.NewRequestWithContext(ctx, http.MethodGet, address.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	if byteRange := req.Header.Get("Range"); byteRange != "" {
-		fetch.Header.Set("Range", byteRange)
-	}
-	resp, err := client.Do(fetch)
-	if err != nil {
-		return nil, errors.Unwrap(err)
-	}
-	if resp.StatusCode >= http.StatusBadRequest {
-		resp.Body.Close()
-		return nil, refusal(resp.StatusCode)
-	}
-	return resp, nil
 }
 
 // segment answers for a segment of a leg's picture or sound.
@@ -339,13 +296,13 @@ func (s *stage) segment(w http.ResponseWriter, req *http.Request, video bool) {
 		defer keep()
 	}
 	asked := time.Now()
-	resp, err := s.get(ctx, s.relay.segments, req, wanted.uri)
+	resp, err := ask(ctx, s.relay.segments, wanted.uri.String(), req.Header.Get("Range"))
 	if err != nil {
 		if whole && l.flying.Err() != nil {
 			http.NotFound(w, req) // given up
 			return
 		}
-		s.refuse(w, req, file(wanted.uri), err)
+		refuse(w, req, file(wanted.uri), err)
 		return
 	}
 	body := &counted{ReadCloser: resp.Body, flow: &s.flow}
@@ -461,9 +418,9 @@ func (s *stage) key(w http.ResponseWriter, req *http.Request) {
 		http.NotFound(w, req)
 		return
 	}
-	resp, err := s.get(req.Context(), s.relay.direct, req, address)
+	resp, err := ask(req.Context(), s.relay.direct, address.String(), req.Header.Get("Range"))
 	if err != nil {
-		s.refuse(w, req, file(address), err)
+		refuse(w, req, file(address), err)
 		return
 	}
 	defer resp.Body.Close()

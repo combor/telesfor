@@ -171,21 +171,20 @@ type Provider interface {
 }
 ```
 
-Then give it a tuner in `cmd/telesfor/main.go`: a device ID, a path and a
-range of channel numbers of its own, how many streams it plays at once if
-fewer than four, and the settings it is started with, such as its proxy. Each
-stream returns a `Source` with its URL and the HTTP client used to fetch it.
+Each stream returns a `Source` with its URL and the HTTP client used to fetch
+it.
 
-The tuner comes with a tab on the settings page, which shows those settings.
-A provider adds to its tab by implementing more:
+Then add a row for it to `sources` in `cmd/telesfor/main.go`. The row has a
+key, which names the `-<key>-proxy` flag and `TELESFOR_<KEY>_PROXY`, and says
+for `-help` what the provider is and why it may want a proxy. `proxied` opens
+the provider with its proxy, or `stored` with the store as well, for one that
+keeps a sign-in. The row's tuner has a device ID, a path and a range of
+channel numbers of its own, which Plex knows it by, so they stay as they are.
+It also says how many streams the provider plays at once, if fewer than four.
 
-| Interface | Adds |
-|---|---|
-| `provider.Account` | A sign-in, by a code the user enters on the provider's own site. |
-| `provider.Settings` | Settings of its own: HTML the provider writes, and the forms posted from it. |
-
-The page allows no inline styles or scripts, so that HTML uses the classes of
-`internal/web/static/style.css`.
+The tuner comes with a tab on the settings page, which shows its proxy. A
+provider that implements `provider.Account` also has its sign-in there, by a
+code the user enters on the provider's own site.
 
 ## Tests
 

@@ -1,7 +1,10 @@
 // Package web serves the browser interface: a settings page with a tab for
 // each provider, which holds what to enter in Plex for it, its sign-in, its
-// settings and its channels, and a tab for the settings telesfor was started
-// with.
+// settings, its channels and the switch that disables it, and a tab for the
+// settings telesfor was started with.
+//
+// It also serves the API, which lists the providers and enables or disables
+// them.
 //
 // static/htmx-4.0.0.min.js is dist/htmx.min.js from the htmx.org 4.0.0 npm
 // package, under the Zero-Clause BSD license.
@@ -16,6 +19,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/combor/telesfor/internal/tuner"
 )
@@ -33,12 +37,15 @@ func page(name string) *template.Template {
 	return template.Must(template.Must(layout.Clone()).ParseFS(files, name))
 }
 
-// Handler serves the interface under /ui/. Like the tuners it is open to
-// whoever can reach it, and all it lets them change is a provider's sign-in.
+// Handler serves the interface under /ui/ and the API under /api/. Like the
+// tuners they are open to whoever can reach them, and all they let them
+// change is a provider's sign-in, and whether it is enabled.
 type Handler struct {
 	Providers []Provider // a tab for each
 	Settings  []Setting  // telesfor's own, as it was started with
 	Version   string
+
+	failed sync.Map // the providers that could not be enabled or disabled when last asked, by name
 }
 
 // Provider is a provider's tuner, and the settings of the provider that
@@ -48,9 +55,10 @@ type Provider struct {
 	Settings []Setting
 }
 
-// Register adds the interface's routes to mux.
+// Register adds the routes of the interface and of the API to mux.
 func (h *Handler) Register(mux *http.ServeMux) {
-	// A page of another site must not sign anyone in or out.
+	// A page of another site must not sign anyone in or out, or disable a
+	// provider.
 	sameOrigin := http.NewCrossOriginProtection()
 	mux.Handle("GET /{$}", http.RedirectHandler("/ui/", http.StatusSeeOther))
 	mux.Handle("GET /ui/{$}", secure(http.HandlerFunc(h.providerTab)))
@@ -60,6 +68,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /ui/settings", http.RedirectHandler("/ui/", http.StatusSeeOther))
 	mux.Handle("POST /ui/providers/{provider}/sign-in", sameOrigin.Handler(http.HandlerFunc(h.signIn)))
 	mux.Handle("POST /ui/providers/{provider}/sign-out", sameOrigin.Handler(http.HandlerFunc(h.signOut)))
+	mux.Handle("POST /ui/providers/{provider}/enable", sameOrigin.Handler(h.switchTo(true)))
+	mux.Handle("POST /ui/providers/{provider}/disable", sameOrigin.Handler(h.switchTo(false)))
+	mux.HandleFunc("GET /api/providers", h.listProviders)
+	mux.Handle("PATCH /api/providers/{provider}", sameOrigin.Handler(http.HandlerFunc(h.patchProvider)))
 	mux.Handle("GET /ui/static/", secure(http.StripPrefix("/ui/static/", staticFiles())))
 }
 

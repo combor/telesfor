@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
@@ -37,10 +38,11 @@ type frame struct {
 
 // tab leads to a provider's part of the page, or to the server's.
 type tab struct {
-	Name    string
-	Path    string
-	Current bool
-	Problem string // what the provider needs seen to, such as a sign-in to renew
+	Name     string
+	Path     string
+	Current  bool
+	Disabled bool   // the tab of a provider that is
+	Problem  string // what the provider needs seen to, such as a sign-in to renew
 }
 
 // State names what the tuners are doing for the header.
@@ -62,11 +64,11 @@ func (f frame) StateLabel() string {
 func (h *Handler) frame(path string) frame {
 	f := frame{Version: displayVersion(h.Version), Path: path}
 	for _, p := range h.Providers {
-		t := tab{Name: p.Tuner.Name(), Path: tabPath(p.Tuner.Provider())}
+		t := tab{Name: p.Tuner.Name(), Path: tabPath(p.Tuner.Provider()), Disabled: !p.Tuner.Enabled()}
 		for _, ch := range p.Tuner.Lineup() {
 			f.OnAir = f.OnAir || ch.Streams > 0
 		}
-		if account, ok := p.Tuner.Provider().(provider.Account); ok {
+		if account, ok := p.Tuner.Provider().(provider.Account); ok && !t.Disabled {
 			if login := (accountView{account.Login()}); login.Expired() {
 				t.Problem = login.Label()
 			}
@@ -83,10 +85,13 @@ func (h *Handler) frame(path string) frame {
 }
 
 // providerView is a provider's tab: what to enter in Plex for it, its sign-in,
-// its settings, and its channels with what is on air.
+// its settings, the switch that disables it, and its channels with what is on
+// air. The tab of a disabled provider has the switch alone.
 type providerView struct {
 	frame
 	Name     string
+	Disabled bool
+	Failed   bool         // it could not be enabled or disabled when last asked
 	Tuner    string       // the address Plex adds the tuner by
 	Guide    string       // the XMLTV guide's address
 	Account  *accountView // nil if the provider needs no account
@@ -137,13 +142,16 @@ func (a accountView) Left() string {
 }
 
 // find looks up the provider a request names. The page's own address is the
-// first provider's tab.
+// tab of the first provider that is enabled, or of the first if none is.
 func (h *Handler) find(r *http.Request) (Provider, bool) {
 	name := r.PathValue("provider")
 	for _, p := range h.Providers {
-		if name == "" || p.Tuner.Provider().Name() == name {
+		if p.Tuner.Provider().Name() == name || name == "" && p.Tuner.Enabled() {
 			return p, true
 		}
+	}
+	if name == "" && len(h.Providers) > 0 {
+		return h.Providers[0], true
 	}
 	return Provider{}, false
 }
@@ -160,11 +168,13 @@ func (h *Handler) providerTab(w http.ResponseWriter, r *http.Request) {
 	view := providerView{
 		frame:    h.frame(tabPath(t.Provider())),
 		Name:     t.Name(),
+		Disabled: !t.Enabled(),
 		Tuner:    address,
 		Guide:    address + "/xmltv.xml",
 		Settings: p.Settings,
 		Channels: t.Lineup(),
 	}
+	_, view.Failed = h.failed.Load(t.Provider().Name())
 	if account, ok := t.Provider().(provider.Account); ok {
 		view.Account = &accountView{account.Login()}
 	}
@@ -220,4 +230,37 @@ func (h *Handler) signOut(w http.ResponseWriter, r *http.Request) {
 		slog.Error("sign-out failed", "provider", account.Name(), "err", err)
 	}
 	http.Redirect(w, r, tabPath(account), http.StatusSeeOther)
+}
+
+// switchTo enables or disables a provider from its tab, which shows whether
+// that failed.
+func (h *Handler) switchTo(enabled bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := h.find(r)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		h.setEnabled(r.Context(), p, enabled)
+		http.Redirect(w, r, tabPath(p.Tuner.Provider()), http.StatusSeeOther)
+	})
+}
+
+// setEnabled enables or disables a provider, and notes for its tab whether
+// that failed.
+func (h *Handler) setEnabled(ctx context.Context, p Provider, enabled bool) error {
+	var err error
+	if enabled {
+		err = p.Tuner.Enable(ctx)
+	} else {
+		err = p.Tuner.Disable()
+	}
+	name := p.Tuner.Provider().Name()
+	if err != nil {
+		slog.Error("enabling or disabling failed", "provider", name, "enable", enabled, "err", err)
+		h.failed.Store(name, true)
+		return err
+	}
+	h.failed.Delete(name)
+	return nil
 }

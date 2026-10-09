@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -36,11 +37,15 @@ type club struct {
 	fake
 	login   provider.Login
 	changed func()
+	closed  bool // it cannot list its channels
 }
 
 func (*club) Name() string { return "club" }
 
 func (c *club) Channels(context.Context) ([]provider.Channel, error) {
+	if c.closed {
+		return nil, errors.New("closed")
+	}
 	if c.login.State != provider.SignedIn {
 		return nil, nil
 	}
@@ -81,7 +86,7 @@ func newUI(t *testing.T) (*httptest.Server, *club) {
 			[]Setting{{Name: "Proxy", State: "Not set", Flag: "-fake-proxy", Env: "TELESFOR_FAKE_PROXY"}}},
 		{members, tuner.Device{ID: "0BADCAFF", Name: "Club", Path: "/club", First: 1001}, nil},
 	} {
-		lineup, err := tuner.New(t.Context(), source.Provider, nil, source.Device)
+		lineup, err := tuner.New(t.Context(), source.Provider, nil, source.Device, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,18 +109,18 @@ type response struct {
 // and its value.
 func get(t *testing.T, server *httptest.Server, path string, header ...string) response {
 	t.Helper()
-	return request(t, server, http.MethodGet, path, header...)
+	return request(t, server, http.MethodGet, path, "", header...)
 }
 
 // post posts the way get fetches.
 func post(t *testing.T, server *httptest.Server, path string, header ...string) response {
 	t.Helper()
-	return request(t, server, http.MethodPost, path, header...)
+	return request(t, server, http.MethodPost, path, "", header...)
 }
 
-func request(t *testing.T, server *httptest.Server, method, path string, header ...string) response {
+func request(t *testing.T, server *httptest.Server, method, path, body string, header ...string) response {
 	t.Helper()
-	req, err := http.NewRequest(method, server.URL+path, nil)
+	req, err := http.NewRequest(method, server.URL+path, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,6 +306,93 @@ func TestSignIn(t *testing.T) {
 	}
 	if missing := lacks(tab(), `<span class="badge">Signed out</span>`, `<span class="count">0</span>`, `>Club</a>`); missing != nil {
 		t.Errorf("tab after signing out lacks %q", missing)
+	}
+}
+
+// TestDisable disables the fake provider on its tab and enables it through
+// the API, then tries the same on a club that cannot list its channels.
+func TestDisable(t *testing.T) {
+	server, members := newUI(t)
+	patch := func(path, body string, header ...string) response {
+		t.Helper()
+		return request(t, server, http.MethodPatch, path, body, header...)
+	}
+
+	// A page of another site must not do it.
+	if r := post(t, server, "/ui/providers/fake/disable", "Sec-Fetch-Site", "cross-site"); r.status != http.StatusForbidden {
+		t.Errorf("disabling from another site = %d, want it refused", r.status)
+	}
+	if r := patch("/api/providers/fake", `{"enabled": false}`, "Sec-Fetch-Site", "cross-site"); r.status != http.StatusForbidden {
+		t.Errorf("disabling through the API from another site = %d, want it refused", r.status)
+	}
+	if r := get(t, server, "/api/providers"); r.status != http.StatusOK || r.header.Get("Content-Type") != "application/json" ||
+		r.body != `[{"id":"fake","name":"Fake","enabled":true},{"id":"club","name":"Club","enabled":true}]`+"\n" {
+		t.Errorf("the API's providers = %d %q: %s", r.status, r.header.Get("Content-Type"), r.body)
+	}
+
+	if r := post(t, server, "/ui/providers/fake/disable"); r.status != http.StatusSeeOther || r.header.Get("Location") != "/ui/providers/fake" {
+		t.Fatalf("disabling = %d to %q, want a redirect to the tab", r.status, r.header.Get("Location"))
+	}
+	r := get(t, server, "/ui/providers/fake")
+	if missing := lacks(r.body,
+		`<a class="tab tab-disabled" href="/ui/providers/fake" aria-current="page" title="Disabled">Fake</a>`,
+		`<span class="badge">Disabled</span>`,
+		`<form method="post" action="/ui/providers/fake/enable"><button class="button button-primary">Enable</button></form>`,
+	); missing != nil {
+		t.Errorf("tab of a disabled provider lacks %q:\n%s", missing, r.body)
+	}
+	for _, gone := range []string{"Connect Plex", "Startup settings", ">Channels</h2>", `role="status"`} {
+		if strings.Contains(r.body, gone) {
+			t.Errorf("tab of a disabled provider shows %q", gone)
+		}
+	}
+	if r := get(t, server, "/lineup.json"); r.status != http.StatusNotFound {
+		t.Errorf("lineup.json of a disabled provider = %d, want 404", r.status)
+	}
+	// The page opens on the first tab there is something to see on.
+	if r := get(t, server, "/ui/"); !strings.Contains(r.body, "<title>Club — telesfor</title>") {
+		t.Errorf("the page, with its first provider disabled, does not open on the next:\n%s", r.body)
+	}
+
+	for body, want := range map[string]int{``: http.StatusBadRequest, `{"enable": true}`: http.StatusBadRequest, `{"enabled": true}`: http.StatusOK} {
+		if r := patch("/api/providers/fake", body); r.status != want {
+			t.Errorf("PATCH with the body %q = %d, want %d", body, r.status, want)
+		}
+	}
+	if r := patch("/api/providers/nobody", `{"enabled": true}`); r.status != http.StatusNotFound {
+		t.Errorf("PATCH of a provider there is none of = %d, want 404", r.status)
+	}
+	if r := patch("/api/providers/fake", `{"enabled": true}`); r.body != `{"id":"fake","name":"Fake","enabled":true}`+"\n" {
+		t.Errorf("PATCH that changes nothing answers %q", r.body)
+	}
+	if missing := lacks(get(t, server, "/ui/").body,
+		`<a class="tab" href="/ui/providers/fake" aria-current="page">Fake</a>`,
+		`<span class="badge badge-ok">Enabled</span>`,
+		`<form method="post" action="/ui/providers/fake/disable"><button class="button">Disable</button></form>`,
+		`<span class="count">2</span>`,
+	); missing != nil {
+		t.Errorf("tab of a provider enabled again lacks %q", missing)
+	}
+
+	// A provider that cannot list its channels stays disabled, and its tab
+	// says so until it can.
+	if r := patch("/api/providers/club", `{"enabled": false}`); r.body != `{"id":"club","name":"Club","enabled":false}`+"\n" {
+		t.Fatalf("PATCH that disables answers %d %q", r.status, r.body)
+	}
+	members.closed = true
+	if r := patch("/api/providers/club", `{"enabled": true}`); r.status != http.StatusInternalServerError {
+		t.Errorf("enabling a provider that cannot list its channels = %d, want 500", r.status)
+	}
+	post(t, server, "/ui/providers/club/enable")
+	tab := get(t, server, "/ui/providers/club").body
+	if missing := lacks(tab, `<span class="badge">Disabled</span>`, `<p class="problem" role="status">Club could not be enabled. telesfor’s log has the reason.</p>`); missing != nil ||
+		strings.Contains(tab, ">Account</h2>") {
+		t.Errorf("tab of a provider that could not be enabled lacks %q, or shows its account:\n%s", missing, tab)
+	}
+	members.closed = false
+	post(t, server, "/ui/providers/club/enable")
+	if tab := get(t, server, "/ui/providers/club").body; !strings.Contains(tab, ">Account</h2>") || strings.Contains(tab, `role="status"`) {
+		t.Errorf("tab of a provider enabled at last lacks its account, or still shows what went wrong:\n%s", tab)
 	}
 }
 

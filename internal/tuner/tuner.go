@@ -7,6 +7,9 @@
 //
 // Every provider gets a tuner of its own, with its own guide. Plex takes them
 // as devices of one DVR and lists their channels together, sorted by number.
+//
+// A tuner can be disabled. It is then not there for Plex, and asks its
+// provider for nothing.
 package tuner
 
 import (
@@ -23,9 +26,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	bolt "go.etcd.io/bbolt"
+
 	"github.com/combor/telesfor/internal/provider"
 	"github.com/combor/telesfor/internal/remux"
+	"github.com/combor/telesfor/internal/store"
 )
+
+// disabledBucket is the store's bucket of the tuners that are disabled, by
+// their providers' names.
+const disabledBucket = "disabled"
 
 const tunerCount = 4 // how many streams Plex may open at once, unless the device says
 
@@ -52,11 +62,20 @@ type Tuner struct {
 	device   Device
 	remux    *remux.Remuxer
 	mux      *http.ServeMux
-	scanning sync.Mutex                // one Scan at a time
-	lineup   atomic.Pointer[[]channel] // replaced whole by Scan
+	db       *bolt.DB                  // keeps the tuner disabled across restarts
+	ctx      context.Context           // New's: nothing of the tuner outlasts it
+	scanning sync.Mutex                // one Scan, Enable or Disable at a time
+	on       atomic.Pointer[power]     // nil while the tuner is disabled
+	lineup   atomic.Pointer[[]channel] // replaced whole by Scan; nil while the tuner is disabled
 	fetching chan struct{}             // a token held while a guide is fetched: one fetch at a time
 	guide    atomic.Pointer[guide]     // replaced whole by fetchGuide
 	nudge    chan struct{}             // pokes keepFresh after a Scan
+}
+
+// power is a time the tuner is enabled for, which ctx ends with.
+type power struct {
+	ctx context.Context
+	off context.CancelFunc
 }
 
 // channel is a provider's channel with its place in the lineup.
@@ -66,20 +85,28 @@ type channel struct {
 	streams *atomic.Int32 // how many streams of it are open
 }
 
-// New returns a tuner that offers the channels of p. Until ctx ends, it
-// keeps the guide fetched ahead of Plex asking for it: see keepFresh.
-func New(ctx context.Context, p provider.Provider, remuxer *remux.Remuxer, device Device) (*Tuner, error) {
-	t := &Tuner{provider: p, device: device, remux: remuxer, mux: http.NewServeMux(),
+// New returns a tuner that offers the channels of p, unless db has it
+// disabled. Until ctx ends, a tuner that is enabled keeps the guide fetched
+// ahead of Plex asking for it: see keepFresh.
+func New(ctx context.Context, p provider.Provider, remuxer *remux.Remuxer, device Device, db *bolt.DB) (*Tuner, error) {
+	t := &Tuner{provider: p, device: device, remux: remuxer, mux: http.NewServeMux(), db: db, ctx: ctx,
 		fetching: make(chan struct{}, 1), nudge: make(chan struct{}, 1)}
-	if err := t.Scan(ctx); err != nil {
-		return nil, err
-	}
+	// Before the first guide is fetched, which may find the channels changed.
 	if account, ok := p.(provider.Account); ok {
 		account.OnChange(func() {
 			if err := t.Scan(context.Background()); err != nil {
 				slog.Error("scan failed", "provider", p.Name(), "err", err)
 			}
 		})
+	}
+	var disabled bool
+	if _, err := store.Get(db, disabledBucket, p.Name(), &disabled); err != nil {
+		return nil, err
+	}
+	if disabled {
+		slog.Info("disabled", "provider", p.Name())
+	} else if err := t.start(ctx); err != nil {
+		return nil, err
 	}
 
 	t.mux.HandleFunc("GET /discover.json", t.discover)
@@ -88,17 +115,83 @@ func New(ctx context.Context, p provider.Provider, remuxer *remux.Remuxer, devic
 	t.mux.HandleFunc("POST /lineup.post", t.scan)
 	t.mux.HandleFunc("GET /stream/{provider}/{channel}", t.stream)
 	t.mux.HandleFunc("GET /xmltv.xml", t.xmltv)
-	go t.keepFresh(ctx)
 	return t, nil
+}
+
+// Enabled reports whether the tuner is there for Plex.
+func (t *Tuner) Enabled() bool { return t.on.Load() != nil }
+
+// Enable puts a disabled tuner back, with the channels its provider has now.
+// It stays disabled if the provider fails to list them.
+func (t *Tuner) Enable(ctx context.Context) error {
+	t.scanning.Lock()
+	defer t.scanning.Unlock()
+	if t.Enabled() {
+		return nil
+	}
+	if err := t.start(ctx); err != nil {
+		return err
+	}
+	if err := store.Delete(t.db, disabledBucket, t.provider.Name()); err != nil {
+		t.stop()
+		return err
+	}
+	slog.Info("enabled", "provider", t.provider.Name())
+	return nil
+}
+
+// Disable takes the tuner away from Plex: it answers no request, ends the
+// streams it plays, and asks its provider for nothing until it is enabled
+// again.
+func (t *Tuner) Disable() error {
+	t.scanning.Lock()
+	defer t.scanning.Unlock()
+	if !t.Enabled() {
+		return nil
+	}
+	// In the store first: a tuner disabled here alone would be back after a
+	// restart.
+	if err := store.Put(t.db, disabledBucket, t.provider.Name(), true); err != nil {
+		return err
+	}
+	t.stop()
+	slog.Info("disabled", "provider", t.provider.Name())
+	return nil
+}
+
+// start scans for the channels and has the tuner enabled. The caller holds
+// t.scanning, or is New.
+func (t *Tuner) start(ctx context.Context) error {
+	if err := t.scanLocked(ctx); err != nil {
+		return err
+	}
+	on, off := context.WithCancel(t.ctx)
+	t.on.Store(&power{on, off})
+	go t.keepFresh(on)
+	return nil
+}
+
+// stop has the tuner disabled. The caller holds t.scanning.
+func (t *Tuner) stop() {
+	t.on.Swap(nil).off()
+	t.lineup.Store(nil)
 }
 
 // Scan asks the provider for its channels and numbers them from the device's
 // first number, by their place if the provider gives one and in the order
-// given otherwise.
+// given otherwise. A disabled tuner is left without channels.
 func (t *Tuner) Scan(ctx context.Context) error {
 	// Two scans at once could publish their lineups in the wrong order.
 	t.scanning.Lock()
 	defer t.scanning.Unlock()
+	if !t.Enabled() {
+		return nil
+	}
+	return t.scanLocked(ctx)
+}
+
+// scanLocked is Scan for a caller that holds t.scanning.
+func (t *Tuner) scanLocked(ctx context.Context) error {
 	channels, err := t.provider.Channels(ctx)
 	if err != nil {
 		return err
@@ -150,7 +243,16 @@ func (t *Tuner) Register(mux *http.ServeMux) {
 func (t *Tuner) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	began := time.Now()
 	resp := &response{ResponseWriter: w}
-	t.mux.ServeHTTP(resp, r)
+	if on := t.on.Load(); on == nil {
+		http.NotFound(resp, r)
+	} else {
+		// A request ends when the tuner is disabled, and with it the stream it plays.
+		ctx, cancel := context.WithCancel(r.Context())
+		stop := context.AfterFunc(on.ctx, cancel)
+		t.mux.ServeHTTP(resp, r.WithContext(ctx))
+		stop()
+		cancel()
+	}
 	// Register strips the device's path, which the log needs to tell tuners apart.
 	slog.Debug("request", "method", r.Method, "path", t.device.Path+r.URL.Path, "from", r.RemoteAddr,
 		"status", cmp.Or(resp.status, http.StatusOK), "bytes", resp.sent, "took", since(began))

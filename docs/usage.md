@@ -19,7 +19,7 @@ Use command-line flags or environment variables. Flags take precedence.
 | `-francetv-proxy` | `TELESFOR_FRANCETV_PROXY` | Unset | HTTP proxy for France Télévisions' guide and streams. |
 | `-tf1-proxy` | `TELESFOR_TF1_PROXY` | Unset | HTTP proxy for TF1+'s sign-in, guide and streams. |
 | `-wppilot-proxy` | `TELESFOR_WPPILOT_PROXY` | Unset | HTTP proxy for WP Pilot's sign-in, guide and streams. |
-| `-data` | `TELESFOR_DATA` | `telesfor` in your user configuration directory | Directory that keeps the sign-ins to providers. |
+| `-data` | `TELESFOR_DATA` | `telesfor` in your user configuration directory | Directory that keeps the sign-ins to providers, and which of them are disabled. |
 | `-debug` | `TELESFOR_DEBUG` | Off | Log requests, upstream fetches and ffmpeg warnings. |
 | `-version` | | | Print the version and exit. |
 | `-healthcheck` | | | Check that the telesfor at the listen address answers, and exit. |
@@ -232,16 +232,36 @@ settings telesfor was started with. The page refreshes every five seconds.
 The addresses are where your browser reached telesfor. Behind a reverse
 proxy, they are where the proxy reaches it.
 
+To do without a provider, choose **Disable** on its tab. Its tuner is then
+not there for Plex, what plays on it stops, and telesfor asks the provider
+for nothing, until you choose **Enable** there. The choice outlasts restarts.
+Every provider starts out enabled.
+
 The page asks for no sign-in to telesfor itself: anyone who can reach
-telesfor can open it, and sign Globoplay, TF1+ or WP Pilot in or out. It
-never shows the accounts, and leaves out a proxy's user name and password.
+telesfor can open it, sign Globoplay, TF1+ or WP Pilot in or out, and
+disable a provider. It never shows the accounts, and leaves out a proxy's
+user name and password.
+
+## API
+
+A script can disable and enable providers too. Like the page, the API asks
+for no sign-in.
+
+| Request | What it does |
+|---|---|
+| `GET /api/providers` | Lists the providers as JSON: each one's `id`, `name` and whether it is `enabled`. |
+| `PATCH /api/providers/<id>` | Enables or disables a provider, as the JSON body has it, and answers with the provider. |
+
+```sh
+curl -X PATCH -d '{"enabled": false}' http://<telesfor-host>:5004/api/providers/ebc
+```
 
 ## Troubleshooting
 
 | Problem | What to check |
 |---|---|
 | telesfor cannot find ffmpeg | Run `ffmpeg -version` from the same terminal. Install ffmpeg or add it to `PATH`. |
-| Plex cannot find the tuner | Add it manually. From the Plex server, check that `http://<telesfor-host>:5004/discover.json` is reachable. |
+| Plex cannot find the tuner | Add it manually. From the Plex server, check that `http://<telesfor-host>:5004/discover.json` is reachable. A disabled provider's tuner answers 404. |
 | Some channels will not play | Check the log for the reason. A region block needs a connection in the provider's country; DRM-protected channels are not supported. |
 | Globoplay has no channels | Sign in on the settings page. See [Globoplay](#globoplay). |
 | TF1+ has LCI only | Sign in on the settings page. See [TF1+](#tf1). |

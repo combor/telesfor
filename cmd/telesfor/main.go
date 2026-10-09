@@ -73,7 +73,7 @@ func main() {
 			"HTTP proxy for "+s.about+" (env "+s.env()+")")
 	}
 	data := flag.String("data", cmp.Or(os.Getenv("TELESFOR_DATA"), dataDir()),
-		"directory to keep sign-ins in (env TELESFOR_DATA)")
+		"directory to keep sign-ins and disabled providers in (env TELESFOR_DATA)")
 	debug := flag.Bool("debug", os.Getenv("TELESFOR_DEBUG") != "",
 		"also log every request, every upstream fetch and ffmpeg's warnings (env TELESFOR_DEBUG)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
@@ -128,7 +128,7 @@ func run(listen, data string, debug bool, proxies []string) error {
 	ui := &web.Handler{Settings: settings(listen, data, debug), Version: version}
 	channels := 0
 	for i, s := range sources {
-		t, err := tuner.New(context.Background(), providers[i], remuxer, s.device)
+		t, err := tuner.New(context.Background(), providers[i], remuxer, s.device, db)
 		if err != nil {
 			return err
 		}
@@ -188,7 +188,8 @@ func stored[P provider.Provider](open func(proxy string, db *bolt.DB) (P, error)
 }
 
 // checkHealth asks the telesfor that listens on the given address whether it is
-// on the air. It is the health check of the container image.
+// on the air. It is the health check of the container image. It asks the API:
+// a tuner may be disabled.
 func checkHealth(listen string) error {
 	u, err := healthURL(listen)
 	if err != nil {
@@ -220,5 +221,5 @@ func healthURL(listen string) (string, error) {
 	case ip != nil && ip.IsUnspecified():
 		host = "::1"
 	}
-	return (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: "/lineup_status.json"}).String(), nil
+	return (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: "/api/providers"}).String(), nil
 }

@@ -273,6 +273,8 @@ code {
 /* The provider needs seeing to, such as a sign-in to renew. */
 .tab .dot { background: var(--warn); }
 
+.tab-disabled:not(:hover, [aria-current="page"]) { opacity: 0.5; }
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -483,7 +485,7 @@ code {
   white-space: nowrap;
 }
 
-/* A provider's sign-in */
+/* A provider's sign-in, and the switch that disables it */
 
 .account {
   display: grid;

@@ -42,11 +42,11 @@ flowchart LR
 | `internal/provider/wppilot` | WP Pilot's sign-in, channels, guide and stream sessions. |
 | `internal/provider/providertest` | Shared helpers for provider tests. |
 | `internal/httpclient` | Separate HTTP/1.1 connections for a stream's segments. |
-| `internal/store` | The bbolt database that keeps sign-ins across restarts. |
+| `internal/store` | The bbolt database that keeps sign-ins and disabled providers across restarts. |
 | `internal/remux` | HTTP relay, timestamp repair, ffmpeg stream copy, startup alignment and the choice of quality. |
 | `internal/slowproxy` | A throttling proxy for trying telesfor on a slow connection. Not in the binary. |
 | `internal/tuner` | HDHomeRun emulation, streaming endpoints and the XMLTV guide. |
-| `internal/web` | The settings page: Go templates, htmx and a stylesheet, built into the binary. |
+| `internal/web` | The settings page: Go templates, htmx and a stylesheet, built into the binary. Also the API. |
 | `cmd/telesfor` | Configuration, and a tuner for each provider. |
 
 ## Streaming details

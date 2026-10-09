@@ -98,8 +98,12 @@ func (t *Tuner) guideDocument(ctx context.Context) ([]byte, error) {
 		return g.document, nil // fetched while this request waited
 	}
 	// The fetch outlives a viewer that leaves while it runs: the cache wants
-	// the answer whoever asked for it.
-	return t.fetchGuide(context.WithoutCancel(ctx))
+	// the answer whoever asked for it. It ends when the tuner is disabled.
+	on := t.on.Load()
+	if on == nil {
+		return nil, context.Canceled
+	}
+	return t.fetchGuide(on.ctx)
 }
 
 // currentGuide returns the cached guide of the current lineup, or nil when
@@ -115,7 +119,7 @@ func (t *Tuner) currentGuide() *guide {
 // keepFresh keeps the guide fetched ahead of Plex asking for it: right away,
 // so a tuner fresh from a restart has one at hand, after every Scan, whose
 // lineup the guide follows, and on a schedule, so what is served stays ahead
-// of the clock. It runs until ctx ends.
+// of the clock. It runs until ctx ends, which is when the tuner is disabled.
 //
 // A fetch that fails leaves the guide there was, which Plex is given rather
 // than nothing, and is tried again sooner: see guideRetry.

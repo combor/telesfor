@@ -12,12 +12,12 @@ import (
 
 func TestHealthURL(t *testing.T) {
 	for listen, want := range map[string]string{
-		":5004":           "http://127.0.0.1:5004/lineup_status.json",
-		"0.0.0.0:5004":    "http://127.0.0.1:5004/lineup_status.json",
-		"[::]:5004":       "http://[::1]:5004/lineup_status.json",
-		"[fd00::5]:5004":  "http://[fd00::5]:5004/lineup_status.json",
-		"192.0.2.10:5004": "http://192.0.2.10:5004/lineup_status.json",
-		"telesfor:5004":   "http://telesfor:5004/lineup_status.json",
+		":5004":           "http://127.0.0.1:5004/api/providers",
+		"0.0.0.0:5004":    "http://127.0.0.1:5004/api/providers",
+		"[::]:5004":       "http://[::1]:5004/api/providers",
+		"[fd00::5]:5004":  "http://[fd00::5]:5004/api/providers",
+		"192.0.2.10:5004": "http://192.0.2.10:5004/api/providers",
+		"telesfor:5004":   "http://telesfor:5004/api/providers",
 	} {
 		if got, err := healthURL(listen); err != nil || got != want {
 			t.Errorf("healthURL(%q) = %q, %v; want %q", listen, got, err, want)
@@ -31,7 +31,7 @@ func TestHealthURL(t *testing.T) {
 func TestCheckHealth(t *testing.T) {
 	status := http.StatusOK
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/lineup_status.json" {
+		if r.URL.Path != "/api/providers" {
 			t.Errorf("unexpected request: %s", r.URL)
 		}
 		w.WriteHeader(status)

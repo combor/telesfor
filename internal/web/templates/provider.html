@@ -1,4 +1,5 @@
 {{define "page" -}}
+  {{- if not .Disabled}}
   <section class="card guide" aria-labelledby="plex-title">
     <header class="guide-head">
       <h2 id="plex-title">Connect Plex</h2>
@@ -58,7 +59,28 @@
     </div>
   </section>
   {{- end}}
+  {{- end}}
 
+  <section aria-labelledby="provider-title">
+    <div class="section-head">
+      <h2 id="provider-title">Provider</h2>
+      <span class="badge{{if not .Disabled}} badge-ok{{end}}">{{if .Disabled}}Disabled{{else}}Enabled{{end}}</span>
+    </div>
+    <div class="card account">
+      {{- if .Disabled}}
+      <p>{{.Name}} is disabled: its tuner is not there for Plex, and telesfor asks {{.Name}} for nothing.</p>
+      <form method="post" action="{{.Path}}/enable"><button class="button button-primary">Enable</button></form>
+      {{- else}}
+      <p>Disabling {{.Name}} takes its tuner away from Plex and ends what plays on it. telesfor then asks {{.Name}} for nothing.</p>
+      <form method="post" action="{{.Path}}/disable"><button class="button">Disable</button></form>
+      {{- end}}
+      {{- if .Failed}}
+      <p class="problem" role="status">{{.Name}} could not be {{if .Disabled}}enabled{{else}}disabled{{end}}. telesfor’s log has the reason.</p>
+      {{- end}}
+    </div>
+  </section>
+
+  {{- if not .Disabled}}
   <section aria-labelledby="channels-title">
     <div class="section-head">
       <h2 id="channels-title">Channels</h2>
@@ -82,4 +104,5 @@
     <p class="hint">{{.Name}} offered no channels. telesfor asks when it starts.</p>
     {{- end}}
   </section>
+  {{- end}}
 {{- end}}

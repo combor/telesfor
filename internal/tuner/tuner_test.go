@@ -17,6 +17,7 @@ import (
 
 	"github.com/combor/telesfor/internal/provider"
 	"github.com/combor/telesfor/internal/remux"
+	"github.com/combor/telesfor/internal/store"
 )
 
 // fake is a provider with two channels and a guide entry for each. Its
@@ -61,7 +62,7 @@ var device = Device{ID: "0BADCAFE", Name: "Fake", First: 1}
 // newTuner returns a tuner of device for p. It has no remuxer: streaming panics.
 func newTuner(t *testing.T, p provider.Provider) *Tuner {
 	t.Helper()
-	tuner, err := New(t.Context(), p, nil, device)
+	tuner, err := New(t.Context(), p, nil, device, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +118,7 @@ func TestDiscover(t *testing.T) {
 // part of the tuner's address, so every URL it is handed has to carry it.
 func TestTunerAtAPath(t *testing.T) {
 	off := false
-	tuner, err := New(t.Context(), fake{off: &off}, nil, Device{ID: "0BADCAFE", Name: "Fake", Path: "/fake", First: 1001, Tuners: 3})
+	tuner, err := New(t.Context(), fake{off: &off}, nil, Device{ID: "0BADCAFE", Name: "Fake", Path: "/fake", First: 1001, Tuners: 3}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +175,7 @@ func (placed) Channels(context.Context) ([]provider.Channel, error) {
 }
 
 func TestPlacedChannelsKeepTheirNumbers(t *testing.T) {
-	tuner, err := New(t.Context(), placed{}, nil, Device{ID: "0BADCAFE", Name: "Fake", First: 1001})
+	tuner, err := New(t.Context(), placed{}, nil, Device{ID: "0BADCAFE", Name: "Fake", First: 1001}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +184,8 @@ func TestPlacedChannelsKeepTheirNumbers(t *testing.T) {
 	}
 }
 
-// slow is a provider that is held up the first time it lists its channels.
+// slow is a provider that is held up the first time it lists its channels
+// with held unset.
 type slow struct {
 	fake
 	asked, answer chan struct{}
@@ -204,7 +206,9 @@ func (s *slow) Channels(ctx context.Context) ([]provider.Channel, error) {
 func TestScansDoNotOvertake(t *testing.T) {
 	off := false
 	p := &slow{fake: fake{off: &off}, asked: make(chan struct{}), answer: make(chan struct{})}
-	tuner := &Tuner{provider: p, device: device}
+	p.held.Store(true) // not at the scan New makes
+	tuner := newTuner(t, p)
+	p.held.Store(false)
 	first, second := make(chan error, 1), make(chan error, 1)
 	go func() { first <- tuner.Scan(t.Context()) }()
 	<-p.asked
@@ -436,6 +440,66 @@ func TestUnchangedScanKeepsTheGuide(t *testing.T) {
 	}
 }
 
+// dark is a provider that cannot list its channels.
+type dark struct{ fake }
+
+func (dark) Channels(context.Context) ([]provider.Channel, error) {
+	return nil, errors.New("no answer")
+}
+
+// TestDisable takes a tuner away from Plex and puts it back, with a restart
+// after each.
+func TestDisable(t *testing.T) {
+	db, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	p := newCounting()
+	tuner, err := New(t.Context(), p, nil, device, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-p.fetched // the guide, fetched ahead
+
+	if err := tuner.Disable(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/discover.json", "/lineup.json", "/xmltv.xml", "/stream/fake/one"} {
+		if code := ask(tuner, http.MethodGet, path).Code; code != http.StatusNotFound {
+			t.Errorf("%s of a disabled tuner = %d, want 404", path, code)
+		}
+	}
+	// A change of account does not bring the channels back.
+	if err := tuner.Scan(t.Context()); err != nil || tuner.Enabled() || len(tuner.Lineup()) != 0 {
+		t.Errorf("scan of a disabled tuner: %v, enabled %v, lineup %+v", err, tuner.Enabled(), tuner.Lineup())
+	}
+
+	// A restart keeps it disabled, and asks nothing of a provider that would
+	// fail it.
+	restarted, err := New(t.Context(), dark{}, nil, device, db)
+	if err != nil || restarted.Enabled() {
+		t.Fatalf("tuner disabled before a restart: %v, enabled %v", err, restarted.Enabled())
+	}
+	if err := restarted.Enable(t.Context()); err == nil || restarted.Enabled() {
+		t.Errorf("enabling a tuner whose provider lists no channels: %v, enabled %v", err, restarted.Enabled())
+	}
+
+	if err := tuner.Enable(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	<-p.fetched // the guide, fetched anew
+	if guide := guideOf(t, askGuide(tuner)); len(guide.Channels) != 2 || len(guide.Programmes) != 2 {
+		t.Errorf("guide of a tuner enabled again has %d channels and %d programmes, want two of each", len(guide.Channels), len(guide.Programmes))
+	}
+	if n := p.fetches.Load(); n != 2 {
+		t.Errorf("the guide was fetched %d times, want once each time the tuner was enabled", n)
+	}
+	if restarted, err := New(t.Context(), fake{}, nil, device, db); err != nil || !restarted.Enabled() {
+		t.Errorf("tuner enabled before a restart: %v, enabled %v", err, restarted.Enabled())
+	}
+}
+
 func TestStream(t *testing.T) {
 	if status := get(t, "/stream/fake/missing").Code; status != http.StatusNotFound {
 		t.Errorf("unknown channel: got %d, want 404", status)
@@ -456,7 +520,7 @@ func TestStream(t *testing.T) {
 }
 
 // TestLineupCountsStreams tunes a channel whose stream never starts, so that
-// it stays open for as long as the viewer does.
+// it stays open for as long as the viewer does, and the tuner is enabled.
 func TestLineupCountsStreams(t *testing.T) {
 	remuxer, err := remux.New()
 	if err != nil {
@@ -471,7 +535,7 @@ func TestLineupCountsStreams(t *testing.T) {
 	defer upstream.Close()
 	defer close(hold)
 
-	tuner, err := New(t.Context(), fake{signal: true, manifest: upstream.URL + "/master.m3u8"}, remuxer, device)
+	tuner, err := New(t.Context(), fake{signal: true, manifest: upstream.URL + "/master.m3u8"}, remuxer, device, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -495,4 +559,18 @@ func TestLineupCountsStreams(t *testing.T) {
 	if streams := tuner.Lineup()[1].Streams; streams != 0 {
 		t.Errorf("Two has %d streams after its viewer left, want none", streams)
 	}
+
+	// A viewer who stays is let go when the tuner is disabled.
+	left = make(chan struct{})
+	go func() {
+		defer close(left)
+		tuner.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://plex.local:5004/stream/fake/two", nil))
+	}()
+	for tuner.Lineup()[1].Streams == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	if err := tuner.Disable(); err != nil {
+		t.Fatal(err)
+	}
+	<-left
 }

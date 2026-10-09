@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/combor/telesfor/internal/httpclient"
 	"github.com/combor/telesfor/internal/provider"
 	"github.com/combor/telesfor/internal/provider/providertest"
 )
@@ -78,7 +79,7 @@ type france struct {
 	index    string          // the playlist a stream is handed out at: a master, mostly
 	media    string          // the playlist of a quality
 	blocked  map[string]int  // how the servers answer for a file, if not with it
-	ranged   map[string]bool // the files asked for by range
+	ranged   map[string]bool // the files asked for by range, with a good pass
 	fetched  map[string]int  // how often each file was asked for
 	directed int             // how often the list of live channels was asked for
 }
@@ -153,11 +154,13 @@ func serve(t *testing.T) (*france, *Provider) {
 		defer f.mu.Unlock()
 		file := r.PathValue("file")
 		f.fetched[file]++
-		f.ranged[file] = f.ranged[file] || r.Header.Get("Range") != ""
-		switch {
-		case f.revoked[r.PathValue("pass")]:
+		if f.revoked[r.PathValue("pass")] {
 			w.Header().Set("X-ErrorType", "ltoken")
 			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		f.ranged[file] = f.ranged[file] || r.Header.Get("Range") != ""
+		switch {
 		case answer(w, f.blocked[file]):
 		case file == "index.m3u8":
 			io.WriteString(w, f.index)
@@ -425,6 +428,32 @@ func TestStream(t *testing.T) {
 	}
 	if f.directed != 1 {
 		t.Errorf("asked for the list of live channels %d times, want once for both tunes", f.directed)
+	}
+}
+
+// The segments go over the segment pool, where a pass that has run out is
+// renewed as well, and the segment is asked for again with its range.
+func TestStreamOverTheSegmentPool(t *testing.T) {
+	f, p := serve(t)
+	source, err := p.Stream(t.Context(), "france-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	segments, release := httpclient.SegmentClient(source.Client)
+	defer release()
+
+	f.revoked["pass1"] = true
+	req, _ := http.NewRequest(http.MethodGet, f.url+"/pass1/live/france-2/high-48337899.ts", nil)
+	req.Header.Set("Range", "bytes=0-")
+	resp, err := segments.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	picture, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(picture) != "picture" || f.passes != 2 || !f.ranged["high-48337899.ts"] {
+		t.Errorf("a segment after the pass ran out: %d %q with %d passes handed out, asked for by range: %t, want it with a second pass, by range",
+			resp.StatusCode, picture, f.passes, f.ranged["high-48337899.ts"])
 	}
 }
 

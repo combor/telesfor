@@ -354,11 +354,8 @@ func (c *controller) reserve() time.Duration {
 	return reserve
 }
 
-func (c *controller) littleLeft(reserve time.Duration) bool { return c.full > 0 && reserve < c.full/3 }
-func (c *controller) mostLeft(reserve time.Duration) bool   { return c.full > 0 && reserve >= c.full*2/3 }
-
 func (c *controller) downShare(reserve time.Duration) float64 {
-	if c.littleLeft(reserve) {
+	if c.full > 0 && reserve < c.full/3 {
 		return rushShare
 	}
 	return holdShare
@@ -515,7 +512,7 @@ func (c *controller) fetched(quality int, a arrival) (to int, why string, ok boo
 		next++
 	}
 	// With the newest segment in, the reserve is as large as it gets.
-	if next < len(c.ladder) && a.newest && c.mostLeft(reserve) && !now.Before(c.standing[next].barred) &&
+	if next < len(c.ladder) && a.newest && c.full > 0 && reserve >= c.full*2/3 && !now.Before(c.standing[next].barred) &&
 		c.takes(next) <= startShare*c.budget(c.speed()) &&
 		quiet && now.Sub(c.changedAt) >= c.calmPeriod() {
 		return next, "the connection has room for more", true
@@ -542,9 +539,9 @@ func (c *controller) tooSlow(recent []fetch, reserve time.Duration) bool {
 	switch {
 	case n == 0:
 		return false
-	case c.littleLeft(reserve):
+	case c.full > 0 && reserve < c.full/3:
 		return recent[n-1].slow()
-	case !c.mostLeft(reserve):
+	case c.full == 0 || reserve < c.full*2/3:
 		return n >= 2 && recent[n-1].slow() && recent[n-2].slow()
 	}
 	var all fetch

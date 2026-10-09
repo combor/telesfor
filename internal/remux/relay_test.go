@@ -42,6 +42,19 @@ func get(t *testing.T, base *url.URL, ref string) response {
 	return response{resp.StatusCode, resp.Request.URL, resp.Header, string(body)}
 }
 
+// relayTo opens a relay for the stream behind manifest, read with client, and
+// returns it with the local address ffmpeg would read the manifest at. The
+// relay closes when the test ends.
+func relayTo(t *testing.T, manifest string, client *http.Client) (*relay, *url.URL) {
+	t.Helper()
+	r, local, err := openRelay(manifest, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(r.close)
+	return r, mustParse(t, local)
+}
+
 func TestRelay(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.RequestURI() {
@@ -58,13 +71,9 @@ func TestRelay(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	defer upstream.Close()
+	t.Cleanup(upstream.Close)
 
-	relay, local, err := openRelay(upstream.URL+"/live/token/master.m3u8", upstream.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest, _ := url.Parse(local)
+	relay, manifest := relayTo(t, upstream.URL+"/live/token/master.m3u8", upstream.Client())
 
 	if got := get(t, manifest, ""); got.status != 200 || got.header.Get("Content-Type") != "application/vnd.apple.mpegurl" || got.body != "playlist" {
 		t.Errorf("manifest: got %d %q %q, want it relayed as is", got.status, got.header.Get("Content-Type"), got.body)
@@ -85,7 +94,7 @@ func TestRelay(t *testing.T) {
 	}
 
 	relay.close()
-	if resp, err := http.Get(local); err == nil {
+	if resp, err := http.Get(manifest.String()); err == nil {
 		resp.Body.Close()
 		t.Error("the relay still answers after it was closed")
 	}
@@ -97,15 +106,11 @@ func TestRelayByteRange(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeContent(w, r, "media.mp4", time.Time{}, strings.NewReader("0123456789"))
 	}))
-	defer upstream.Close()
+	t.Cleanup(upstream.Close)
 
-	relay, local, err := openRelay(upstream.URL+"/media.mp4", upstream.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer relay.close()
+	_, local := relayTo(t, upstream.URL+"/media.mp4", upstream.Client())
 
-	req, _ := http.NewRequest(http.MethodGet, local, nil)
+	req, _ := http.NewRequest(http.MethodGet, local.String(), nil)
 	req.Header.Set("Range", "bytes=2-5")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -128,15 +133,11 @@ func TestRelayInterruptedTransfer(t *testing.T) {
 			w.Header().Set("Content-Length", strconv.Itoa(size))
 			w.Write(make([]byte, size/2)) // half of it, and then the connection drops
 		}))
-		defer upstream.Close()
+		t.Cleanup(upstream.Close)
 
-		relay, local, err := openRelay(upstream.URL+"/segment", upstream.Client())
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer relay.close()
+		_, local := relayTo(t, upstream.URL+"/segment", upstream.Client())
 
-		resp, err := http.Get(local)
+		resp, err := http.Get(local.String())
 		if err != nil {
 			continue // failed before the first byte: just as good
 		}
@@ -163,14 +164,9 @@ func TestRelayRepairsTimestamps(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 	}))
-	defer upstream.Close()
+	t.Cleanup(upstream.Close)
 
-	relay, local, err := openRelay(upstream.URL+"/playlist.m3u8", upstream.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer relay.close()
-	manifest, _ := url.Parse(local)
+	_, manifest := relayTo(t, upstream.URL+"/playlist.m3u8", upstream.Client())
 
 	// The first segment tells the relay how late the stream is. From then on
 	// every frame is repaired.
@@ -197,7 +193,7 @@ func TestRelayRedirect(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	defer edge.Close()
+	t.Cleanup(edge.Close)
 	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/live.m3u8" {
 			http.Error(w, "the router serves no media", http.StatusPreconditionFailed)
@@ -205,14 +201,9 @@ func TestRelayRedirect(t *testing.T) {
 		}
 		http.Redirect(w, r, edge.URL+"/stream/index.m3u8", http.StatusFound)
 	}))
-	defer router.Close()
+	t.Cleanup(router.Close)
 
-	relay, local, err := openRelay(router.URL+"/live.m3u8", router.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer relay.close()
-	start, _ := url.Parse(local)
+	_, start := relayTo(t, router.URL+"/live.m3u8", router.Client())
 
 	manifest := get(t, start, "")
 	if manifest.status != 200 || manifest.body != "playlist" {
@@ -240,17 +231,12 @@ func TestRelayKeepsManifest(t *testing.T) {
 		fetched.Add(1)
 		io.WriteString(w, playlist)
 	}))
-	defer upstream.Close()
+	t.Cleanup(upstream.Close)
 
-	relay, local, err := openRelay(upstream.URL+"/media.m3u8", upstream.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer relay.close()
+	relay, manifest := relayTo(t, upstream.URL+"/media.m3u8", upstream.Client())
 	if l := relay.qualities(t.Context(), upstream.URL+"/media.m3u8"); l != nil {
 		t.Fatalf("found %d qualities in the playlist of one", len(l.qualities))
 	}
-	manifest, _ := url.Parse(local)
 	for look, want := range []int32{1, 2} {
 		if got := get(t, manifest, ""); got.status != 200 || got.body != playlist || fetched.Load() != want {
 			t.Errorf("look %d: got %d %q after %d fetches, want the playlist after %d", look+1, got.status, got.body, fetched.Load(), want)
@@ -272,14 +258,9 @@ func TestRelayNotesShortPlaylist(t *testing.T) {
 		}
 		io.WriteString(w, "#EXTM3U\n"+strings.Repeat("#EXTINF:2.000,\nsegment.ts\n", segments))
 	}))
-	defer upstream.Close()
+	t.Cleanup(upstream.Close)
 
-	relay, local, err := openRelay(upstream.URL+"/master.m3u8", upstream.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer relay.close()
-	manifest, _ := url.Parse(local)
+	relay, manifest := relayTo(t, upstream.URL+"/master.m3u8", upstream.Client())
 
 	for _, want := range []bool{true, false} {
 		get(t, manifest, "media.m3u8")
@@ -301,12 +282,8 @@ func TestRelayClosesOwnedSegmentPool(t *testing.T) {
 	}
 	origin.EnableHTTP2 = true
 	origin.StartTLS()
-	defer origin.Close()
-	relay, _, err := openRelay(origin.URL+"/playlist", origin.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer relay.segments.CloseIdleConnections()
+	t.Cleanup(origin.Close)
+	relay, _ := relayTo(t, origin.URL+"/playlist", origin.Client())
 	resp, err := relay.segments.Get(origin.URL + "/asset")
 	if err != nil {
 		t.Fatal(err)
@@ -349,17 +326,13 @@ func TestRelayCancelsOpaqueMedia(t *testing.T) {
 	}))
 	origin.EnableHTTP2 = true
 	origin.StartTLS()
-	defer origin.Close()
+	t.Cleanup(origin.Close)
 	client := &http.Client{Transport: httpclient.NewTransport(origin.Client().Transport.(*http.Transport))}
-	defer client.CloseIdleConnections()
-	relay, local, err := openRelay(origin.URL+"/opaque?part=1", client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer relay.close()
+	t.Cleanup(client.CloseIdleConnections)
+	_, local := relayTo(t, origin.URL+"/opaque?part=1", client)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, local, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, local.String(), nil)
 	req.Header.Set("Range", "bytes=0-")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

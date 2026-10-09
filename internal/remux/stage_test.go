@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -421,6 +420,25 @@ func TestCopyEndsWithItsViewer(t *testing.T) {
 	}
 }
 
+// stageOn opens a relay to the server at origin and a stage on it for TVP's
+// qualities, and begins its first leg. Both close when the test ends.
+func stageOn(t *testing.T, origin string, client *http.Client) (*stage, *leg) {
+	t.Helper()
+	r, _ := relayTo(t, origin+"/playlist", client)
+	now := time.Now()
+	ctl := testController(&route{}, &now)
+	st, err := openStage(r, tvpLadder, ctl, newMeter(io.Discard), func(*leg, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.close)
+	l, err := st.begin(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st, l
+}
+
 // Read audio through the stage rather than seeding the flow counter. This
 // must fail if audio is disconnected from the shared speed measurement.
 func TestAudioContributesToFlow(t *testing.T) {
@@ -437,26 +455,9 @@ func TestAudioContributesToFlow(t *testing.T) {
 		}
 		w.Write(make([]byte, chunk))
 	}))
-	defer origin.Close()
-	relay, _, err := openRelay(origin.URL+"/playlist", origin.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer relay.close()
-	defer relay.segments.CloseIdleConnections()
-	now := time.Now()
-	ctl := testController(&route{}, &now)
-	st, err := openStage(relay, tvpLadder, ctl, newMeter(io.Discard), func(*leg, string) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.close()
-	l, err := st.begin(0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	address, _ := url.Parse(origin.URL + "/audio")
-	l.sound.list = playlist{segments: []entry{{seq: 0, uri: address, length: time.Second}}}
+	t.Cleanup(origin.Close)
+	st, l := stageOn(t, origin.URL, origin.Client())
+	l.sound.list = playlist{segments: []entry{{seq: 0, uri: mustParse(t, origin.URL+"/audio"), length: time.Second}}}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+st.server.Addr+"/1/a/0/asset", nil)
@@ -518,27 +519,11 @@ func TestUnwatchedSegmentCancellation(t *testing.T) {
 			}))
 			origin.EnableHTTP2 = true
 			origin.StartTLS()
-			defer origin.Close()
+			t.Cleanup(origin.Close)
 			client := &http.Client{Transport: httpclient.NewTransport(origin.Client().Transport.(*http.Transport))}
-			defer client.CloseIdleConnections()
-			relay, _, err := openRelay(origin.URL+"/playlist", client)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer relay.close()
-			now := time.Now()
-			ctl := testController(&route{}, &now)
-			st, err := openStage(relay, tvpLadder, ctl, newMeter(io.Discard), func(*leg, string) error { return nil })
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer st.close()
-			l, err := st.begin(0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			address, _ := url.Parse(origin.URL + "/asset")
-			list := playlist{segments: []entry{{seq: 0, uri: address, length: time.Second}}}
+			t.Cleanup(client.CloseIdleConnections)
+			st, l := stageOn(t, origin.URL, client)
+			list := playlist{segments: []entry{{seq: 0, uri: mustParse(t, origin.URL+"/asset"), length: time.Second}}}
 			l.video.list, l.sound.list = list, list
 
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
@@ -586,7 +571,7 @@ func TestUnwatchedSegmentCancellation(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("upstream body was not canceled")
 			}
-			resp, err = client.Get(origin.URL + "/next")
+			resp, err := client.Get(origin.URL + "/next")
 			if err != nil {
 				t.Fatal(err)
 			}

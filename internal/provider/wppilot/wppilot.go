@@ -90,7 +90,7 @@ func New(proxy string, db *bolt.DB) (*Provider, error) {
 		codeLife: 15 * time.Minute, // measured: WP does not say
 	}
 	if p.account, err = load(db); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("wppilot: %w", err)
 	}
 	return p, nil
 }

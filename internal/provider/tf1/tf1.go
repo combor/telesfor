@@ -107,7 +107,7 @@ func New(proxy string, db *bolt.DB) (*Provider, error) {
 		rest:   provider.Rest,
 	}
 	if p.account, err = load(db); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tf1: %w", err)
 	}
 	return p, nil
 }

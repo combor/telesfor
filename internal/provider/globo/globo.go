@@ -92,7 +92,7 @@ func New(proxy string, db *bolt.DB) (*Provider, error) {
 		codeLife:  5 * time.Minute, // measured: Globo does not say
 	}
 	if p.account, err = load(db); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("globo: %w", err)
 	}
 	return p, nil
 }

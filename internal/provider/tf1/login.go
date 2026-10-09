@@ -298,7 +298,7 @@ func load(db *bolt.DB) (*account, error) {
 	signedIn := new(account)
 	found, err := store.Get(db, "tf1", "account", signedIn)
 	if err != nil {
-		return nil, fmt.Errorf("tf1: loading the sign-in: %w", err)
+		return nil, fmt.Errorf("loading the sign-in: %w", err)
 	}
 	if !found {
 		return nil, nil

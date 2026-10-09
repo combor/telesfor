@@ -237,7 +237,7 @@ func load(db *bolt.DB) (*account, error) {
 	signedIn := new(account)
 	found, err := store.Get(db, "globo", "account", signedIn)
 	if err != nil {
-		return nil, fmt.Errorf("globo: loading the sign-in: %w", err)
+		return nil, fmt.Errorf("loading the sign-in: %w", err)
 	}
 	if !found {
 		return nil, nil

@@ -188,7 +188,7 @@ func (p *Provider) Stream(ctx context.Context, channelID string) (provider.Sourc
 		}
 		select {
 		case <-ctx.Done():
-			return provider.Source{}, ctx.Err()
+			return provider.Source{}, fmt.Errorf("tvp: %w", ctx.Err())
 		case <-time.After(p.pause):
 		}
 	}

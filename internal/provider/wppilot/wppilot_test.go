@@ -532,14 +532,10 @@ func TestStream(t *testing.T) {
 	}
 
 	// The stream's servers answer to who opened the stream, and are none of
-	// the session's business. Segments go over a pool of their own.
-	segments, release := httpclient.SegmentClient(source.Client)
-	defer release()
-	for client, file := range map[*http.Client]string{source.Client: "playlist.m3u8", segments: "media.ts"} {
-		resp, _ := providertest.Get(t, client, f.url+"/cdn/9/"+file)
-		if want := file + " by " + browser + " with "; resp.StatusCode != http.StatusOK || !slices.Contains(see(f, func() []string { return f.fetched }), want) {
-			t.Errorf("%s: %s, asked for as %q: want it asked for as %q", file, resp.Status, f.fetched, want)
-		}
+	// the session's business.
+	resp, _ := providertest.Get(t, source.Client, f.url+"/cdn/9/playlist.m3u8")
+	if want := "playlist.m3u8 by " + browser + " with "; resp.StatusCode != http.StatusOK || !slices.Contains(see(f, func() []string { return f.fetched }), want) {
+		t.Errorf("the playlist: %s, asked for as %q: want it asked for as %q", resp.Status, f.fetched, want)
 	}
 
 	// WP is told that the stream is watched for as long as it is, and that

@@ -30,6 +30,9 @@ func tabPath(p provider.Provider) string { return "/ui/providers/" + p.Name() }
 type frame struct {
 	Version string
 	Tabs    []tab
+	Title   string // the page's, after the current tab
+	Path    string // the current tab's, which the page refreshes from
+	OnAir   bool   // whether a stream of any provider is open
 }
 
 // tab leads to a provider's part of the page, or to the server's.
@@ -37,43 +40,19 @@ type tab struct {
 	Name    string
 	Path    string
 	Current bool
-	Streams int    // open now, over the provider's channels
 	Problem string // what the provider needs seen to, such as a sign-in to renew
-}
-
-func (f frame) current() tab {
-	for _, t := range f.Tabs {
-		if t.Current {
-			return t
-		}
-	}
-	return tab{}
-}
-
-func (f frame) Title() string { return f.current().Name + " — telesfor" }
-
-// Path is the URL the page refreshes from.
-func (f frame) Path() string { return f.current().Path }
-
-// Streams is how many are open now, over all providers.
-func (f frame) Streams() int {
-	streams := 0
-	for _, t := range f.Tabs {
-		streams += t.Streams
-	}
-	return streams
 }
 
 // State names what the tuners are doing for the header.
 func (f frame) State() string {
-	if f.Streams() > 0 {
+	if f.OnAir {
 		return "on-air"
 	}
 	return "idle"
 }
 
 func (f frame) StateLabel() string {
-	if f.Streams() > 0 {
+	if f.OnAir {
 		return "On air"
 	}
 	return "Idle"
@@ -81,11 +60,11 @@ func (f frame) StateLabel() string {
 
 // frame lists the tabs, with the one at path as the current.
 func (h *Handler) frame(path string) frame {
-	f := frame{Version: displayVersion(h.Version)}
+	f := frame{Version: displayVersion(h.Version), Path: path}
 	for _, p := range h.Providers {
 		t := tab{Name: p.Tuner.Name(), Path: tabPath(p.Tuner.Provider())}
 		for _, ch := range p.Tuner.Lineup() {
-			t.Streams += ch.Streams
+			f.OnAir = f.OnAir || ch.Streams > 0
 		}
 		if account, ok := p.Tuner.Provider().(provider.Account); ok {
 			if login := (accountView{account.Login()}); login.Expired() {
@@ -95,8 +74,10 @@ func (h *Handler) frame(path string) frame {
 		f.Tabs = append(f.Tabs, t)
 	}
 	f.Tabs = append(f.Tabs, tab{Name: "Server", Path: serverPath})
-	for i := range f.Tabs {
-		f.Tabs[i].Current = f.Tabs[i].Path == path
+	for i, t := range f.Tabs {
+		if t.Path == path {
+			f.Tabs[i].Current, f.Title = true, t.Name+" — telesfor"
+		}
 	}
 	return f
 }

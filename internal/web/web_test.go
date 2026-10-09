@@ -306,12 +306,12 @@ func TestSignIn(t *testing.T) {
 
 func TestOnAir(t *testing.T) {
 	tabs := []tab{
-		{Name: "Fake", Path: "/ui/providers/fake", Current: true, Streams: 3},
+		{Name: "Fake", Path: "/ui/providers/fake", Current: true},
 		{Name: "Club", Path: "/ui/providers/club"},
 	}
 	lineup := []tuner.Station{{Number: "1", Name: "One"}, {Number: "2", Name: "Two", Streams: 1}, {Number: "3", Name: "Three", Streams: 2}}
 	var page bytes.Buffer
-	if err := providerPage.ExecuteTemplate(&page, "layout", providerView{frame: frame{"dev", tabs}, Name: "Fake", Channels: lineup}); err != nil {
+	if err := providerPage.ExecuteTemplate(&page, "layout", providerView{frame: frame{Version: "dev", Tabs: tabs, OnAir: true}, Name: "Fake", Channels: lineup}); err != nil {
 		t.Fatal(err)
 	}
 	if missing := lacks(page.String(),

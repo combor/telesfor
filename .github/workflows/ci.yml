@@ -230,18 +230,14 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Verify the published image is public
         env:
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ghcr.io/combor/telesfor@${{ steps.build.outputs.digest }}
         run: |
-          repo=combor/telesfor
-          manifest=$RUNNER_TEMP/ghcr-manifest.json
-          if ! curl -fsSL "https://ghcr.io/token?service=ghcr.io&scope=repository:$repo:pull" -o "$RUNNER_TEMP/ghcr-token.json"; then
+          # Ask as a stranger would.
+          docker logout ghcr.io
+          if ! index=$(docker buildx imagetools inspect --raw "$IMAGE"); then
             echo "anonymous pull denied: set the GHCR package to public in its settings, then re-run this job"
             exit 1
           fi
-          token=$(jq -r .token "$RUNNER_TEMP/ghcr-token.json")
-          curl -fsSL -H "Authorization: Bearer $token" \
-            -H "Accept: application/vnd.oci.image.index.v1+json" \
-            "https://ghcr.io/v2/$repo/manifests/$IMAGE_DIGEST" >"$manifest"
-          published=$(jq -r '[.manifests[] | select(.platform.os == "linux") | "\(.platform.os)/\(.platform.architecture)"] | sort | join(" ")' "$manifest")
+          published=$(jq -r '[.manifests[] | select(.platform.os == "linux") | "\(.platform.os)/\(.platform.architecture)"] | sort | join(" ")' <<<"$index")
           echo "published: $published"
           [ "$published" = "linux/amd64 linux/arm64" ] || exit 1

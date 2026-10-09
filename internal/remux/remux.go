@@ -156,14 +156,10 @@ func (r *Remuxer) play(ctx context.Context, w io.Writer, s Stream, relay *relay,
 			return cmp.Or(err, ended)
 		}
 		// How the ffmpeg of a leg ended matters only if the stream fails with it.
-		next, over, err := st.after(l, n > 0)
-		if over {
-			return nil
+		if l, err = st.after(l, n > 0, ended); l == nil {
+			return err
 		}
-		if l = next; l == nil {
-			return cmp.Or(err, ended)
-		}
-		if l.anew {
+		if l.startsOver {
 			// What the ffmpeg before had written has gone nowhere: the
 			// stream starts over.
 			out = newReserve(gauge, relay.short.Load)

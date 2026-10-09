@@ -1,6 +1,7 @@
 package remux
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -9,11 +10,11 @@ import (
 
 // leg is a stretch of a stream in one quality, read by one ffmpeg.
 type leg struct {
-	n       int  // its number, from 1
-	quality int  // which of the ladder's
-	before  *leg // the leg it follows; nil for the first
-	again   bool // it stands in for a leg that came to nothing
-	anew    bool // it starts the stream over: nothing of it had reached the viewer
+	n          int  // its number, from 1
+	quality    int  // which of the ladder's
+	before     *leg // the leg it follows; nil for the first
+	standsIn   bool // it stands in for a leg that came to nothing
+	startsOver bool // it starts the stream over: nothing of it had reached the viewer
 
 	video, sound track
 
@@ -109,7 +110,7 @@ func (s *stage) change(l *leg, to int, why string) {
 		before = l.before
 	}
 	s.pending = s.add(to, before)
-	s.pending.anew = anew
+	s.pending.startsOver = anew
 	s.mu.Unlock()
 
 	s.ctl.changed(to, why)
@@ -123,49 +124,71 @@ func (s *stage) change(l *leg, to int, why string) {
 
 // after returns the leg that follows one whose ffmpeg has ended, or nil if
 // the stream ends with it: because it is over, because an ffmpeg did not
-// start, or for whatever the leg's own ffmpeg ended for. A leg that wrote
-// nothing and has no other to follow it failed: the stream then goes on from
-// where it was, in the quality it had. If it had none, it starts in the best,
-// as it does when nothing is known of the connection.
-func (s *stage) after(l *leg, wrote bool) (next *leg, over bool, err error) {
-	best := len(s.ladder.qualities) - 1
+// start, or for whatever the leg's own ffmpeg ended with, ended. Its error is
+// why, and nil if the stream is over. A leg that wrote nothing and has no
+// other to follow it failed: the stream then goes on from where it was, in
+// the quality it had. If it had none, it starts in the best, as it does when
+// nothing is known of the connection.
+func (s *stage) after(l *leg, wrote bool, ended error) (*leg, error) {
+	var failed error // why the ffmpeg of the leg to follow did not start
 	for {
 		s.mu.Lock()
-		next, over = s.pending, s.over
-		if s.pending = nil; next == nil && !wrote && !over && !l.again && (l.before != nil || l.quality != best) {
-			instead := best
-			if l.before != nil {
-				instead = l.before.quality
-			}
-			next = s.add(instead, l.before)
-			next.again, next.anew = true, l.anew
+		next, over := s.pending, s.over
+		s.pending = nil
+		if next == nil && !wrote && !over {
+			next = s.standIn(l)
 		}
 		if next != nil {
-			s.current = next
-			// A leg begins where the one before it ended, and stands in for
-			// it. The legs before that are of no more use, and their
-			// playlists may be hours long.
-			for i, old := range s.legs {
-				if old != next && old != next.before {
-					s.legs[i] = nil
-				}
-			}
-			if next.before != nil {
-				next.before.before = nil
-			}
+			s.takeOver(next)
 		}
 		s.mu.Unlock()
 		if next == nil {
-			return nil, over, err
+			if over {
+				return nil, nil
+			}
+			return nil, cmp.Or(failed, ended)
 		}
-		if next.again {
+		if next.standsIn {
 			s.ctl.unfits(l.quality)
 			s.ctl.changed(next.quality, "the other quality would not play")
 		}
 		if next.failed == nil {
-			return next, false, nil
+			return next, nil
 		}
-		l, wrote, err = next, false, fmt.Errorf("remux: starting ffmpeg: %w", next.failed)
+		l, wrote, failed = next, false, fmt.Errorf("remux: starting ffmpeg: %w", next.failed)
+	}
+}
+
+// standIn starts a leg in place of l, which wrote nothing and has none to
+// follow it: in the quality of the leg before, from where that ended, or in
+// the best if l was the first. It starts none for a leg that stands in itself,
+// or where that is what failed. The caller holds the lock.
+func (s *stage) standIn(l *leg) *leg {
+	best := len(s.ladder.qualities) - 1
+	if l.standsIn || (l.before == nil && l.quality == best) {
+		return nil
+	}
+	instead := best
+	if l.before != nil {
+		instead = l.before.quality
+	}
+	next := s.add(instead, l.before)
+	next.standsIn, next.startsOver = true, l.startsOver
+	return next
+}
+
+// takeOver makes a leg the current one. The leg begins where the one before
+// it ended, so the legs before that are of no more use, and their playlists
+// may be hours long. The caller holds the lock.
+func (s *stage) takeOver(next *leg) {
+	s.current = next
+	for i, old := range s.legs {
+		if old != next && old != next.before {
+			s.legs[i] = nil
+		}
+	}
+	if next.before != nil {
+		next.before.before = nil
 	}
 }
 

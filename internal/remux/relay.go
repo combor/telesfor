@@ -64,15 +64,13 @@ func openRelay(manifest string, client *http.Client) (r *relay, local string, er
 	if client == nil {
 		client = http.DefaultClient
 	}
-	segments := *client
-	segmentTransport, release := httpclient.SegmentTransport(client.Transport)
-	segments.Transport = segmentTransport
+	segments, release := httpclient.SegmentClient(client)
 	// ffmpeg has to see the redirects itself: they change what the relative
 	// URIs in a playlist refer to.
-	noFollow := segments
+	noFollow := *segments
 	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-	r = &relay{client: &noFollow, direct: client, segments: &segments, release: release, twins: map[string]*http.Server{}}
+	r = &relay{client: &noFollow, direct: client, segments: segments, release: release, twins: map[string]*http.Server{}}
 	local, err = r.local(upstream)
 	if err != nil {
 		release()

@@ -558,11 +558,9 @@ func TestStream(t *testing.T) {
 
 	// The stream's servers answer to who opened the stream, and are none of
 	// the session's business. Segments go over a pool of their own.
-	segments := *source.Client
-	transport, release := httpclient.SegmentTransport(source.Client.Transport)
+	segments, release := httpclient.SegmentClient(source.Client)
 	defer release()
-	segments.Transport = transport
-	for client, file := range map[*http.Client]string{source.Client: "playlist.m3u8", &segments: "media.ts"} {
+	for client, file := range map[*http.Client]string{source.Client: "playlist.m3u8", segments: "media.ts"} {
 		resp, err := client.Get(f.url + "/cdn/9/" + file)
 		if err != nil {
 			t.Fatal(err)

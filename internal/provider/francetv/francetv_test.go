@@ -477,10 +477,8 @@ func TestCancellableSession(t *testing.T) {
 		return string(body)
 	}
 	client := &http.Client{Transport: httpclient.Wrap(base.Transport, s.roundTrip)}
-	segments := *client
-	segmentTransport, release := httpclient.SegmentTransport(client.Transport)
+	segments, release := httpclient.SegmentClient(client)
 	defer release()
-	segments.Transport = segmentTransport
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, origin.URL+"/old/segment.ts", nil)
 	req.Header.Set("Range", "bytes=2-5")
 	resp, err := segments.Do(req)

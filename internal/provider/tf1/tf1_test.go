@@ -499,10 +499,8 @@ func TestPass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	segments := *source.Client
-	transport, release := httpclient.SegmentTransport(source.Client.Transport)
+	segments, release := httpclient.SegmentClient(source.Client)
 	defer release()
-	segments.Transport = transport
 	// As ffmpeg asks: always with the pass the stream started with.
 	fetch := func(client *http.Client, file string) (status int, body, from string) {
 		t.Helper()
@@ -529,12 +527,12 @@ func TestPass(t *testing.T) {
 	if want := "/pass1/prod/TFX/cmaf/out/high.m3u8"; from != want {
 		t.Errorf("after the pass ran out, the playlist is from %s, want it from where it was asked for, %s", from, want)
 	}
-	if status, body, _ := fetch(&segments, "high-1.mp4"); status != http.StatusOK || body != "TFX/high-1.mp4" || f.passes != 2 {
+	if status, body, _ := fetch(segments, "high-1.mp4"); status != http.StatusOK || body != "TFX/high-1.mp4" || f.passes != 2 {
 		t.Errorf("a segment after: %d %q with %d passes handed out, want it with the second", status, body, f.passes)
 	}
 	// A segment is the first to be refused as well.
 	f.set(func() { f.expired["pass2"] = true })
-	if status, _, _ := fetch(&segments, "high-2.mp4"); status != http.StatusOK || f.passes != 3 {
+	if status, _, _ := fetch(segments, "high-2.mp4"); status != http.StatusOK || f.passes != 3 {
 		t.Errorf("a segment after the second pass ran out: %d with %d passes handed out, want 200 with a third", status, f.passes)
 	}
 

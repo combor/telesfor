@@ -213,6 +213,15 @@ jobs:
             type=semver,pattern={{version}}
             type=sha,format=long
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+          # The title, source and licence come from the repository, which has
+          # no description.
+          labels: &description |
+            org.opencontainers.image.description=Live TV from streaming services in Plex, as a virtual HDHomeRun tuner.
+          annotations: *description
+        env:
+          # GHCR's package page reads a multi-platform image's description
+          # from its index.
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -221,6 +230,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           build-args: VERSION=${{ steps.meta.outputs.version }}
           provenance: mode=max
           sbom: true

@@ -224,36 +224,22 @@ func (s *stage) takeOver(next *leg) {
 }
 
 // place finds where a leg begins in the playlist of its picture or sound, if
-// that is not known yet. The first leg begins headStart segments before the
-// newest. Every other begins where the leg before it ends, which is a
-// segment of another playlist: it fails if the two cannot be lined up. The
-// caller holds the lock.
-//
-// The picture and the sound of the first leg begin at the same time, as far
-// as the playlists tell: whichever is placed second goes by the first. A
-// segment may be listed between the two, and ffmpeg gives up on a picture
-// that begins seconds after the sound.
-func (s *stage) place(l *leg, t *track, list playlist, video bool) bool {
+// that is not known yet. The first leg joins the stream live: see joinLive.
+// Every other begins where the leg before it ends, which is a segment of
+// another playlist: it fails if the two cannot be lined up. The caller holds
+// the lock.
+func (s *stage) place(l *leg, list playlist, video bool) bool {
+	t := l.track(video)
 	if t.placed() {
 		return true
 	}
-	before, other := (*track)(nil), l.track(!video)
-	if l.before != nil {
-		before = l.before.track(video)
-	}
-	if before == nil || !before.placed() {
-		t.from = max(list.first(), list.next()-headStart)
-		if first, placed := other.list.find(other.from); placed {
-			if same, ok := list.starting(first.at); ok {
-				t.from = max(list.first(), same)
-			} else { // as many segments from the newest
-				t.from = max(list.first(), list.next()-(other.list.next()-other.from))
-			}
-		}
+	if l.before == nil || !l.before.track(video).placed() {
+		t.from = joinLive(list, l.track(!video))
 		if video {
 			s.relay.short.Store(len(list.segments) < headStart)
 		}
 	} else {
+		before := l.before.track(video)
 		ahead, ok := before.list.ahead(list)
 		if !ok {
 			return false
@@ -263,4 +249,21 @@ func (s *stage) place(l *leg, t *track, list playlist, video bool) bool {
 	}
 	t.asked, t.started = t.from-1, t.from-1
 	return true
+}
+
+// joinLive is where the first leg begins in a playlist: headStart segments
+// before the newest. Its picture and its sound begin at the same time, as far
+// as the playlists tell: whichever is placed second goes by the first. A
+// segment may be listed between the two, and ffmpeg gives up on a picture
+// that begins seconds after the sound.
+func joinLive(list playlist, other *track) int64 {
+	from := list.next() - headStart
+	if first, ok := other.list.find(other.from); ok {
+		if same, timed := list.starting(first.at); timed {
+			from = same
+		} else { // as many segments from the newest
+			from = list.next() - (other.list.next() - other.from)
+		}
+	}
+	return max(list.first(), from)
 }

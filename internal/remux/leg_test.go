@@ -26,14 +26,14 @@ func TestFirstLegBeginsTogether(t *testing.T) {
 		l := &leg{}
 		l.video.from, l.sound.from = -1, -1
 		for _, video := range []bool{!test.soundFirst, test.soundFirst} {
-			track, list := &l.sound, test.sound
+			list := test.sound
 			if video {
-				track, list = &l.video, test.video
+				list = test.video
 			}
-			if !s.place(l, track, list, video) {
+			if !s.place(l, list, video) {
 				t.Fatalf("%s: the leg could not be placed", test.name)
 			}
-			track.list = list
+			l.track(video).list = list
 		}
 		if got := [2]int64{l.video.from, l.sound.from}; got != test.want {
 			t.Errorf("%s: picture and sound begin at %v, want %v", test.name, got, test.want)

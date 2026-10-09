@@ -13,6 +13,9 @@ import (
 	"time"
 )
 
+// playlistType is the Content-Type of a playlist.
+const playlistType = "application/vnd.apple.mpegurl"
+
 // stage plays a stream that comes in more than one quality to ffmpeg, one
 // quality at a time.
 //
@@ -105,7 +108,7 @@ func (s *stage) master(w http.ResponseWriter, req *http.Request) {
 		http.NotFound(w, req)
 		return
 	}
-	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	w.Header().Set("Content-Type", playlistType)
 	fmt.Fprintf(w, "#EXTM3U\n"+
 		"#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"sound\",NAME=\"sound\",DEFAULT=YES,AUTOSELECT=YES,URI=\"audio.m3u8\"\n"+
 		"#EXT-X-STREAM-INF:BANDWIDTH=%d,AUDIO=\"sound\"\nvideo.m3u8\n", s.ladder.qualities[l.quality].rate)
@@ -157,7 +160,7 @@ func (s *stage) playlist(w http.ResponseWriter, req *http.Request, video bool) {
 			return
 		}
 		s.mu.Lock()
-		placed := s.place(l, t, list, video)
+		placed := s.place(l, list, video)
 		if placed {
 			t.list = list
 		}
@@ -194,7 +197,18 @@ func (s *stage) playlist(w http.ResponseWriter, req *http.Request, video bool) {
 	}
 
 	s.mu.Lock()
-	text := t.list.write(t.listFrom(), t.until, max(t.from, 0), t.complete(), func(kind string, seq int64, uri string) string {
+	text := s.rewrite(t, letter)
+	s.mu.Unlock()
+	w.Header().Set("Content-Type", playlistType)
+	io.WriteString(w, text)
+}
+
+// rewrite writes the playlist of a track as ffmpeg is given it, from listFrom
+// to where the leg ends, with every address leading back to the stage: a
+// segment's to the letter of its track, and a key's or an init section's to
+// the number it is kept by. The caller holds the lock.
+func (s *stage) rewrite(t *track, letter string) string {
+	return t.list.write(t.listFrom(), t.until, max(t.from, 0), t.complete(), func(kind string, seq int64, uri string) string {
 		u, err := url.Parse(uri)
 		if err != nil {
 			return uri
@@ -209,9 +223,6 @@ func (s *stage) playlist(w http.ResponseWriter, req *http.Request, video bool) {
 		}
 		return fmt.Sprintf("x/%d/%s", n, url.PathEscape(file(u)))
 	})
-	s.mu.Unlock()
-	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-	io.WriteString(w, text)
 }
 
 // read fetches a playlist.

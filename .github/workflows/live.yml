@@ -11,29 +11,18 @@ permissions:
 
 jobs:
   live:
-    name: ${{ matrix.name }}'s channels, guide and streams
+    name: Providers' channels, guides and streams
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: TVP
-            package: tvp
-          - name: EBC
-            package: ebc
-          - name: TV Cultura
-            package: cultura
-          - name: france.tv
-            package: francetv
-          - name: TF1+
-            package: tf1
+    # Five minutes a provider, and the runner tests four at a time.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: 'go.mod'
           cache: false
-      - run: go test -count=1 -v -run TestLive ./internal/provider/${{ matrix.package }}
+      # Each TestLive skips what CI cannot check: Globoplay's and WP Pilot's
+      # need a telesfor that has signed in, which CI has not.
+      - run: go test -count=1 -timeout 5m -v -run TestLive ./internal/provider/...
         env:
           TELESFOR_LIVE: 1

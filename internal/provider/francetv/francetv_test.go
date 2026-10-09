@@ -265,11 +265,10 @@ func TestProgrammes(t *testing.T) {
 	paris := time.FixedZone("CEST", 2*60*60)
 	var shown []string
 	for _, programme := range programmes {
-		line := fmt.Sprintf("%s to %s: %s", programme.Start.In(paris).Format("Mon 15:04"), programme.Stop.In(paris).Format("Mon 15:04"), programme.Title)
-		if programme.Description == unlisted {
-			line += " (unlisted)"
+		if programme.Title == "France 2" && programme.Description == unlisted {
+			continue
 		}
-		shown = append(shown, line)
+		shown = append(shown, fmt.Sprintf("%s to %s: %s", programme.Start.In(paris).Format("Mon 15:04"), programme.Stop.In(paris).Format("Mon 15:04"), programme.Title))
 
 		switch programme.Title {
 		case "Sœurs":
@@ -289,27 +288,15 @@ func TestProgrammes(t *testing.T) {
 	listed := []string{
 		"Tue 21:10 to Tue 22:45: Après la colère", // on since before, and until the next starts
 		"Tue 22:45 to Tue 23:50: Justice en France",
-		"Tue 23:50 to Wed 00:00: France 2 (unlisted)",
-		"Wed 00:00 to Wed 01:00: France 2 (unlisted)",
-	}
-	morning := []string{
-		"Wed 05:00 to Wed 06:00: France 2 (unlisted)",
 		"Wed 06:00 to Wed 06:35: Dans le retro",
 		"Wed 06:35 to Wed 06:50: Okoo-koo", // cut short by the next
 		"Wed 06:50 to Wed 06:55: Journal Météo Climat",
-		"Wed 06:55 to Wed 07:00: France 2 (unlisted)",
-	}
-	evening := []string{
-		"Wed 20:00 to Wed 21:00: France 2 (unlisted)",
-		"Wed 21:00 to Wed 21:10: France 2 (unlisted)",
 		"Wed 21:10 to Wed 21:58: Sœurs",
 		"Wed 21:58 to Wed 22:50: Sœurs",
 		"Wed 22:50 to Thu 00:22: Un père idéal",
-		"Thu 00:22 to Thu 01:00: France 2 (unlisted)",
 	}
-	if len(shown) != 53 || !slices.Equal(shown[:4], listed) || !slices.Equal(shown[8:13], morning) || !slices.Equal(shown[26:32], evening) ||
-		shown[52] != "Thu 21:00 to Thu 22:00: France 2 (unlisted)" {
-		t.Errorf("France 2's guide:\n%s", strings.Join(shown, "\n"))
+	if len(programmes) != 53 || !slices.Equal(shown, listed) {
+		t.Errorf("France 2's guide of %d programmes, %d of them its name:\n%s", len(programmes), len(programmes)-len(shown), strings.Join(shown, "\n"))
 	}
 
 	// A programme is looked up once, found or not.

@@ -3,7 +3,6 @@ package tf1
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,6 +13,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/store"
 )
 
 // TF1 signs a device in the way of RFC 8628, as its apps for TV sets do: the
@@ -290,51 +290,26 @@ func (p *Provider) expire(token string) {
 	}
 }
 
-var (
-	bucket     = []byte("tf1")
-	accountKey = []byte("account")
-)
-
 // load reads the account from the store. There is none before the first
 // sign-in.
 func load(db *bolt.DB) (*account, error) {
-	if db == nil {
-		return nil, nil
-	}
-	var signedIn *account
-	err := db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucket)
-		if b == nil || b.Get(accountKey) == nil {
-			return nil
-		}
-		signedIn = new(account)
-		return json.Unmarshal(b.Get(accountKey), signedIn)
-	})
+	signedIn := new(account)
+	found, err := store.Get(db, "tf1", "account", signedIn)
 	if err != nil {
-		return nil, fmt.Errorf("tf1: loading the sign-in from %s: %w", db.Path(), err)
+		return nil, fmt.Errorf("tf1: loading the sign-in: %w", err)
+	}
+	if !found {
+		return nil, nil
 	}
 	return signedIn, nil
 }
 
 // save writes the account to the store, or removes it when there is none.
 func save(db *bolt.DB, signedIn *account) error {
-	if db == nil {
-		return nil
+	if signedIn == nil {
+		return store.Delete(db, "tf1", "account")
 	}
-	return db.Update(func(tx *bolt.Tx) error {
-		b, err := tx.CreateBucketIfNotExists(bucket)
-		if err != nil {
-			return err
-		}
-		if signedIn == nil {
-			return b.Delete(accountKey)
-		}
-		v, err := json.Marshal(signedIn)
-		if err != nil {
-			return err
-		}
-		return b.Put(accountKey, v)
-	})
+	return store.Put(db, "tf1", "account", signedIn)
 }
 
 var _ provider.Account = (*Provider)(nil)

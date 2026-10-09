@@ -2,7 +2,6 @@ package wppilot
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,6 +13,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/store"
 )
 
 const (
@@ -347,51 +347,26 @@ func (p *Provider) relist(ctx context.Context) {
 	}
 }
 
-var (
-	bucket     = []byte("wppilot")
-	accountKey = []byte("account")
-)
-
 // load reads the account from the store. There is none before the first
 // sign-in.
 func load(db *bolt.DB) (*account, error) {
-	if db == nil {
-		return nil, nil
-	}
-	var signedIn *account
-	err := db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucket)
-		if b == nil || b.Get(accountKey) == nil {
-			return nil
-		}
-		signedIn = new(account)
-		return json.Unmarshal(b.Get(accountKey), signedIn)
-	})
+	signedIn := new(account)
+	found, err := store.Get(db, "wppilot", "account", signedIn)
 	if err != nil {
-		return nil, fmt.Errorf("wppilot: loading the sign-in from %s: %w", db.Path(), err)
+		return nil, fmt.Errorf("wppilot: loading the sign-in: %w", err)
+	}
+	if !found {
+		return nil, nil
 	}
 	return signedIn, nil
 }
 
 // save writes the account to the store, or removes it when there is none.
 func save(db *bolt.DB, signedIn *account) error {
-	if db == nil {
-		return nil
+	if signedIn == nil {
+		return store.Delete(db, "wppilot", "account")
 	}
-	return db.Update(func(tx *bolt.Tx) error {
-		b, err := tx.CreateBucketIfNotExists(bucket)
-		if err != nil {
-			return err
-		}
-		if signedIn == nil {
-			return b.Delete(accountKey)
-		}
-		v, err := json.Marshal(signedIn)
-		if err != nil {
-			return err
-		}
-		return b.Put(accountKey, v)
-	})
+	return store.Put(db, "wppilot", "account", signedIn)
 }
 
 var _ provider.Account = (*Provider)(nil)

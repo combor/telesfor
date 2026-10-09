@@ -226,8 +226,10 @@ jobs:
           build-args: VERSION=${{ steps.meta.outputs.version }}
           provenance: mode=max
           sbom: true
+          # Reads the smoke test's cache. A tag's cache is its own, and the
+          # smoke test writes it first, so one written here would serve only
+          # a re-run of this job by itself.
           cache-from: type=gha
-          cache-to: type=gha,mode=max
       - name: Verify the published image is public
         env:
           IMAGE: ghcr.io/combor/telesfor@${{ steps.build.outputs.digest }}

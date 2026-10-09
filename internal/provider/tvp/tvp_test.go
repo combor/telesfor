@@ -23,6 +23,17 @@ func serve(t *testing.T, handler http.HandlerFunc) *Provider {
 	return &Provider{api: server.URL, client: server.Client()}
 }
 
+// refusing starts a router of TVP's that turns every address away, as it
+// does those of VPNs.
+func refusing(t *testing.T) *httptest.Server {
+	t.Helper()
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Forbidden.", http.StatusForbidden)
+	}))
+	t.Cleanup(router.Close)
+	return router
+}
+
 func TestChannels(t *testing.T) {
 	p := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/lives" || r.URL.Query().Get("platform") != "BROWSER" {
@@ -86,10 +97,7 @@ func TestStreamRefusedWhereHandedOut(t *testing.T) {
 		io.WriteString(w, "#EXTM3U")
 	}))
 	defer own.Close()
-	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Forbidden.", http.StatusForbidden)
-	}))
-	defer router.Close()
+	router := refusing(t)
 
 	var hosts []string // where the API hands the stream out, one call after another
 	asked := 0
@@ -137,10 +145,7 @@ func TestStreamCancelledKeepsTheServer(t *testing.T) {
 		io.WriteString(w, "#EXTM3U")
 	}))
 	defer own.Close()
-	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Forbidden.", http.StatusForbidden)
-	}))
-	defer router.Close()
+	router := refusing(t)
 
 	var host atomic.Pointer[string] // where the API hands the stream out
 	p := serve(t, func(w http.ResponseWriter, r *http.Request) {
@@ -186,10 +191,7 @@ func TestStreamKeepsTheHostFoundMeanwhile(t *testing.T) {
 		io.WriteString(w, "#EXTM3U")
 	}))
 	defer own.Close()
-	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Forbidden.", http.StatusForbidden)
-	}))
-	defer router.Close()
+	router := refusing(t)
 
 	var host atomic.Pointer[string] // where the API hands the stream out
 	p = serve(t, func(w http.ResponseWriter, r *http.Request) {
@@ -222,10 +224,7 @@ func TestChannelsLearnWhereStreamsAreServed(t *testing.T) {
 		io.WriteString(w, "#EXTM3U")
 	}))
 	defer own.Close()
-	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Forbidden.", http.StatusForbidden)
-	}))
-	defer router.Close()
+	router := refusing(t)
 
 	var asked atomic.Int32 // the times the API was asked for a stream
 	p := serve(t, func(w http.ResponseWriter, r *http.Request) {

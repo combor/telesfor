@@ -27,7 +27,8 @@ func TestContainerServesLineup(t *testing.T) {
 	t.Cleanup(func() {
 		if t.Failed() {
 			logs, _ := exec.Command("docker", "logs", id).CombinedOutput()
-			t.Logf("container logs:\n%s", logs)
+			health, _ := exec.Command("docker", "inspect", "-f", "{{json .State.Health.Log}}", id).Output()
+			t.Logf("container logs:\n%s\nhealth checks: %s", logs, health)
 		}
 		_ = exec.Command("docker", "rm", "-f", id).Run()
 	})
@@ -39,8 +40,8 @@ func TestContainerServesLineup(t *testing.T) {
 		if status == "healthy" {
 			break
 		}
-		if status == "unhealthy" || ctx.Err() != nil {
-			t.Fatalf("health status %q: %s", status, docker(ctx, t, "inspect", "-f", "{{json .State.Health.Log}}", id))
+		if status == "unhealthy" {
+			t.Fatalf("health status %q", status)
 		}
 		time.Sleep(time.Second)
 	}

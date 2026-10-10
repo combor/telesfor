@@ -75,7 +75,7 @@ jobs:
       - name: Build the packages
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
-          version: &goreleaser-version v2.18.2
+          version: &goreleaser-version v2.18.3
           args: release --snapshot --clean --skip=nix
       # The service fetches its channels from TVP as it starts. The pass is
       # asserted: a leg whose name drifted from the Go test's distros table

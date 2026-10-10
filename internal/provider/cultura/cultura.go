@@ -262,8 +262,32 @@ func refusal(what string, status int) error {
 
 // get fetches a page of TV Cultura's: a playlist, or a day of the guide. It
 // returns the page with the address it came from, after redirects, and its
-// status.
+// status. A temporary server failure gets three more tries, after one, two
+// and four seconds. Each response is closed before waiting or trying again.
 func (p *Provider) get(ctx context.Context, address string) (page string, at *url.URL, status int, err error) {
+	for attempt, wait := 0, time.Second; ; attempt, wait = attempt+1, 2*wait {
+		if err := ctx.Err(); err != nil {
+			return "", nil, 0, err
+		}
+		page, at, status, err := p.fetch(ctx, address)
+		if err != nil || attempt == 3 {
+			return page, at, status, err
+		}
+		switch status {
+		case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		default:
+			return page, at, status, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", nil, 0, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
+// fetch makes one request, keeping its body and final address together.
+func (p *Provider) fetch(ctx context.Context, address string) (page string, at *url.URL, status int, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return "", nil, 0, err

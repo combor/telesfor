@@ -1,6 +1,6 @@
 module github.com/combor/telesfor
 
-go 1.27.2
+go 1.27.3
 
 require go.etcd.io/bbolt v1.5.0
 

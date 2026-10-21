@@ -100,7 +100,9 @@ see [Streaming details](development.md#why-start-behind-the-live-edge).
 
 France 2, France 3, France 4, France 5 and franceinfo need no account. All
 but franceinfo play only in France. From abroad, set `-francetv-proxy` to an
-HTTP proxy that exits there.
+HTTP proxy that exits there. If one of France Télévisions' servers refuses the
+proxy's exit, telesfor asks Cloudflare's DNS, through the proxy, for the
+others and plays from one of them.
 
 France 3 is the national channel, without the regional programmes. A film
 that france.tv also has in its original language plays in French.

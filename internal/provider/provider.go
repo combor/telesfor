@@ -75,13 +75,21 @@ type Source struct {
 func Client(proxy string) (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if proxy != "" {
-		proxyURL, err := url.Parse(proxy)
-		if err != nil || proxyURL.Host == "" {
-			return nil, fmt.Errorf("invalid proxy %q: want a URL like http://host:port", proxy)
+		proxyURL, err := parseProxy(proxy)
+		if err != nil {
+			return nil, err
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 	return &http.Client{Transport: httpclient.NewTransport(transport), Timeout: time.Minute}, nil
+}
+
+func parseProxy(proxy string) (*url.URL, error) {
+	proxyURL, err := url.Parse(proxy)
+	if err != nil || proxyURL.Host == "" {
+		return nil, fmt.Errorf("invalid proxy %q: want a URL like http://host:port", proxy)
+	}
+	return proxyURL, nil
 }
 
 // Account is a Provider that streams to an account. The user signs in on the

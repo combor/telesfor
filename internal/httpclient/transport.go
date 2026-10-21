@@ -80,6 +80,12 @@ func (t *through) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.send(req, t.next)
 }
 
+func (t *through) CloseIdleConnections() {
+	if next, ok := t.next.(interface{ CloseIdleConnections() }); ok {
+		next.CloseIdleConnections()
+	}
+}
+
 // wrapped's segment transport is a plain through: it has no pool to hand out.
 type wrapped struct{ through }
 

@@ -206,6 +206,43 @@ func TestWrap(t *testing.T) {
 	}
 }
 
+// A wrapped client closes the idle connections of the transport under it, and
+// of its segment pool.
+func TestWrapClosesIdleConnections(t *testing.T) {
+	origin := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		io.WriteString(w, "ok")
+	}))
+	origin.EnableHTTP2 = true
+	origin.StartTLS()
+	defer origin.Close()
+	client := &http.Client{Transport: Wrap(NewTransport(origin.Client().Transport.(*http.Transport)), func(req *http.Request, next http.RoundTripper) (*http.Response, error) {
+		return next.RoundTrip(req)
+	})}
+	defer client.CloseIdleConnections()
+	segments, release := SegmentClient(client)
+	defer release()
+	for _, client := range []*http.Client{client, segments} {
+		reused := func() bool {
+			t.Helper()
+			var reused bool
+			ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused }})
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, origin.URL, nil)
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			return reused
+		}
+		reused()
+		client.CloseIdleConnections()
+		if reused() {
+			t.Errorf("a request after closing the idle connections reused one")
+		}
+	}
+}
+
 type authenticatedTransport struct{ base http.RoundTripper }
 
 func (t authenticatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {

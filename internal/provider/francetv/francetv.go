@@ -94,9 +94,12 @@ type Provider struct {
 // France Télévisions keeps its channels to France, all but franceinfo, and
 // tells by the address that fetches the stream. So when proxy is set, all
 // traffic goes through it: the API calls made here and, later, the stream
-// itself.
+// itself. A server of its CDN can place the proxy's exit outside France where
+// the others do not, so the others are asked then.
 func New(proxy string) (*Provider, error) {
-	client, err := provider.Client(proxy)
+	client, err := provider.EdgeClient(proxy, func(resp *http.Response) bool {
+		return blocked(resp.StatusCode, resp.Header)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("francetv: %w", err)
 	}
@@ -672,14 +675,19 @@ func find(id string) (channel, bool) {
 	return channels[i], true
 }
 
+// blocked tells whether France Télévisions refused something to an address
+// outside France. Its CDN gives its reason for a 403 in a header.
+func blocked(status int, header http.Header) bool {
+	return status == http.StatusUnavailableForLegalReasons || status == http.StatusForbidden && header.Get("X-ErrorType") == "geo"
+}
+
 // refusal puts into words that France Télévisions did not hand something
-// out, by what would help. Its CDN gives its reason for a 403 in a header:
-// geo for an address outside France. Anything but a refusal is a stream or a
-// guide that is not there, which neither an account nor a proxy brings back.
+// out, by what would help. Anything but a refusal is a stream or a guide that
+// is not there, which neither an account nor a proxy brings back.
 func refusal(what string, status int, header http.Header) error {
 	reason := header.Get("X-ErrorType")
 	switch {
-	case status == http.StatusUnavailableForLegalReasons, status == http.StatusForbidden && reason == "geo":
+	case blocked(status, header):
 		return fmt.Errorf("%s is blocked outside France: set -francetv-proxy to a proxy with a French exit, or try another exit", what)
 	case status == http.StatusUnauthorized:
 		return fmt.Errorf("%s asks for a sign-in, which telesfor has none for", what)

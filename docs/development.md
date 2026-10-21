@@ -175,7 +175,8 @@ type Provider interface {
 Each stream returns a `Source` with its URL and the HTTP client used to fetch
 it. A client that changes requests wraps the provider's transport with
 `httpclient.Wrap`, so segments keep their own connections. `provider.Pass`
-renews an expiring pass in a stream's addresses.
+renews an expiring pass in a stream's addresses. `provider.EdgeClient` asks a
+CDN's other servers when one refuses the proxy's exit.
 
 `provider.Fill` fills gaps in a guide, and `provider.UntilNext` ends programmes
 that have only start times.

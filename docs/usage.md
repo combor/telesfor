@@ -19,7 +19,7 @@ Use command-line flags or environment variables. Flags take precedence.
 | `-francetv-proxy` | `TELESFOR_FRANCETV_PROXY` | Unset | HTTP proxy for France Télévisions' guide and streams. |
 | `-tf1-proxy` | `TELESFOR_TF1_PROXY` | Unset | HTTP proxy for TF1+'s sign-in, guide and streams. |
 | `-wppilot-proxy` | `TELESFOR_WPPILOT_PROXY` | Unset | HTTP proxy for WP Pilot's sign-in, guide and streams. |
-| `-data` | `TELESFOR_DATA` | `telesfor` in your user configuration directory | Directory that keeps the sign-ins to providers, and which of them are disabled. |
+| `-data` | `TELESFOR_DATA` | `telesfor` in your user configuration directory | Directory that keeps the sign-ins to providers, which of them are disabled, and the last guide of each. |
 | `-debug` | `TELESFOR_DEBUG` | Off | Log requests, upstream fetches and ffmpeg warnings. |
 | `-version` | | | Print the version and exit. |
 | `-healthcheck` | | | Check that the telesfor at the listen address answers, and exit. |

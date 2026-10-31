@@ -62,13 +62,14 @@ type Tuner struct {
 	device   Device
 	remux    *remux.Remuxer
 	mux      *http.ServeMux
-	db       *bolt.DB                  // keeps the tuner disabled across restarts
+	db       *bolt.DB                  // keeps the tuner disabled, and its guide, across restarts
 	ctx      context.Context           // New's: nothing of the tuner outlasts it
 	scanning sync.Mutex                // one Scan, Enable or Disable at a time
 	on       atomic.Pointer[power]     // nil while the tuner is disabled
 	lineup   atomic.Pointer[[]channel] // replaced whole by Scan; nil while the tuner is disabled
 	fetching chan struct{}             // a token held while a guide is fetched: one fetch at a time
-	guide    atomic.Pointer[guide]     // replaced whole by fetchGuide
+	guide    atomic.Pointer[guide]     // replaced whole by publish
+	storing  sync.Mutex                // held by publish, to check a guide and store it as one
 	nudge    chan struct{}             // pokes keepFresh after a Scan
 }
 
@@ -164,6 +165,13 @@ func (t *Tuner) Disable() error {
 func (t *Tuner) start(ctx context.Context) error {
 	if err := t.scanLocked(ctx); err != nil {
 		return err
+	}
+	t.restoreGuide() // before the tuner is on: a request would fetch one
+	// keepFresh fetches at once: the nudge of the scan above, or one left from
+	// before the tuner was disabled, would have it fetch twice.
+	select {
+	case <-t.nudge:
+	default:
 	}
 	on, off := context.WithCancel(t.ctx)
 	t.on.Store(&power{on, off})

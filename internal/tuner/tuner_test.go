@@ -396,6 +396,20 @@ func TestCancelledGuideRequestIsNotKeptWaiting(t *testing.T) {
 	}
 }
 
+// TestStartFetchesTheGuideOnce checks that a tuner that starts asks for the
+// guide once, not again as soon as that fetch ends: had the first scan's
+// nudge been left for it, keepFresh would ask a source that is down twice in
+// a row.
+func TestStartFetchesTheGuideOnce(t *testing.T) {
+	p := &stuck{entered: make(chan struct{}, 8), release: make(chan struct{})}
+	defer close(p.release)
+	tuner := newTuner(t, p)
+	<-p.entered // the first fetch is in flight
+	if n := len(tuner.nudge); n != 0 {
+		t.Errorf("%d nudges wait for keepFresh while it makes its first fetch, want none", n)
+	}
+}
+
 // TestScanRefreshesTheGuide checks that a scan that changes the lineup has
 // the guide fetched anew, before any request: Plex is not kept waiting after
 // an account change.
@@ -437,6 +451,130 @@ func TestUnchangedScanKeepsTheGuide(t *testing.T) {
 	}
 	if n := p.fetches.Load(); n != 1 {
 		t.Errorf("the guide was fetched %d times though nothing changed, want once", n)
+	}
+}
+
+// TestRestartWhileTheSourceIsDown restarts a tuner whose source has gone down
+// since its guide was fetched. The guide from before the restart is served,
+// if it is of the lineup there is now and still reaches ahead, and a guide is
+// fetched anew at once all the same.
+func TestRestartWhileTheSourceIsDown(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		third bool          // the lineup has grown since the guide was fetched
+		left  time.Duration // how far ahead of the restart the guide reaches
+		want  int
+	}{
+		{"saved guide", false, guideSpan - guideRefresh, http.StatusOK},
+		{"lineup changed", true, guideSpan, http.StatusBadGateway},
+		{"guide run out", false, -time.Minute, http.StatusBadGateway},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, err := store.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { db.Close() })
+			before := newCounting()
+			first, err := New(t.Context(), before, nil, device, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			<-before.fetched
+			// The word comes as the fetch begins: the guide is saved once the
+			// fetcher gives the token back.
+			first.fetching <- struct{}{}
+			<-first.fetching
+			fetched := askGuide(first).Body.String()
+
+			var saved savedGuide
+			if found, err := store.Get(db, guidesBucket, "fake", &saved); err != nil || !found {
+				t.Fatalf("saved guide: found %v, %v", found, err)
+			}
+			saved.Until = time.Now().Add(test.left)
+			if err := store.Put(db, guidesBucket, "fake", saved); err != nil {
+				t.Fatal(err)
+			}
+
+			after := newCounting()
+			after.broken.Store(true)
+			after.third.Store(test.third)
+			restarted, err := New(t.Context(), after, nil, device, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := askGuide(restarted)
+			if response.Code != test.want {
+				t.Fatalf("xmltv.xml after a restart = %d %s, want %d", response.Code, response.Body, test.want)
+			}
+			if test.want == http.StatusOK && response.Body.String() != fetched {
+				t.Errorf("xmltv.xml after a restart = %s, want the guide fetched before it: %s", response.Body, fetched)
+			}
+			select {
+			case <-after.fetched:
+			case <-time.After(5 * time.Second):
+				t.Fatal("no guide fetch within 5s of a restart")
+			}
+		})
+	}
+}
+
+// late is a provider whose first guide fetch waits for the test and then
+// answers, whether or not its context has ended meanwhile, and whose later
+// ones fail.
+type late struct {
+	fake
+	entered chan struct{}
+	release chan struct{}
+	fetches atomic.Int32
+}
+
+func (l *late) Programmes(ctx context.Context, channels []provider.Channel, from, to time.Time) ([]provider.Programme, error) {
+	if l.fetches.Add(1) > 1 {
+		return nil, errors.New("the guide is down")
+	}
+	l.entered <- struct{}{}
+	<-l.release
+	return l.fake.Programmes(ctx, channels, from, to)
+}
+
+// TestLateFetchKeepsTheRestoredGuide disables and enables a tuner while a
+// fetch is at its source, which then answers. The guide restored when the
+// tuner was enabled again is of the lineup there is now: the late answer,
+// fetched for the lineup before, must not take its place.
+func TestLateFetchKeepsTheRestoredGuide(t *testing.T) {
+	db, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	before := newCounting()
+	first, err := New(t.Context(), before, nil, device, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-before.fetched
+	first.fetching <- struct{}{} // the guide is saved once the fetcher gives the token back
+	<-first.fetching
+
+	p := &late{entered: make(chan struct{}, 8), release: make(chan struct{})}
+	tuner, err := New(t.Context(), p, nil, device, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-p.entered // the first fetch is at the source
+	if err := tuner.Disable(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tuner.Enable(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	close(p.release)
+	tuner.fetching <- struct{}{} // the late fetch is over once the token is free
+	<-tuner.fetching
+
+	if response := askGuide(tuner); response.Code != http.StatusOK {
+		t.Errorf("xmltv.xml after a late fetch = %d %s, want the restored guide", response.Code, response.Body)
 	}
 }
 

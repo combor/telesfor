@@ -6,9 +6,11 @@ import (
 	"encoding/xml"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/combor/telesfor/internal/provider"
+	"github.com/combor/telesfor/internal/store"
 )
 
 // guideSpan is how far ahead the guide reaches.
@@ -54,18 +56,80 @@ type (
 // guide is a rendered XMLTV document, ready to serve. It carries the lineup
 // it was rendered from, whose numbers name its channels — the guide of
 // another lineup is stale — and when it was fetched, which tells keepFresh
-// when the next one is due.
+// when the next one is due. A guide from the store has no time: it is due at
+// once.
 type guide struct {
 	document []byte
 	lineup   *[]channel
 	made     time.Time
 }
 
+// guidesBucket is the store's bucket of the last guide each tuner fetched, by
+// its provider's name. After a restart, it is the guide there is until one is
+// fetched anew: see restoreGuide.
+const guidesBucket = "guides"
+
+// savedGuide is a guide as the store keeps it. A lineup in memory is told by
+// its address, which a restart changes: the store has it in full.
+type savedGuide struct {
+	Document []byte
+	Lineup   []savedChannel
+	Until    time.Time // the end of what the guide was fetched for
+}
+
+type savedChannel struct {
+	provider.Channel
+	Number string
+}
+
+func savedLineup(lineup []channel) []savedChannel {
+	saved := make([]savedChannel, len(lineup))
+	for i, ch := range lineup {
+		saved[i] = savedChannel{ch.Channel, ch.number}
+	}
+	return saved
+}
+
+// restoreGuide caches the guide the store has from before a restart, if it is
+// of the lineup there is now and still reaches ahead: while the source is
+// down, Plex is better given that than nothing. keepFresh fetches anew at
+// once all the same, as it would without one: the guide may be the work of an
+// older telesfor. The caller holds t.scanning, or is New.
+func (t *Tuner) restoreGuide() {
+	var saved savedGuide
+	found, err := store.Get(t.db, guidesBucket, t.provider.Name(), &saved)
+	if err != nil {
+		slog.Warn("saved guide unreadable", "provider", t.provider.Name(), "err", err)
+		return
+	}
+	lineup := t.lineup.Load()
+	if !found || lineup == nil || !slices.Equal(saved.Lineup, savedLineup(*lineup)) || !time.Now().Before(saved.Until) {
+		return
+	}
+	if t.publish(&guide{document: saved.Document, lineup: lineup}) {
+		slog.Debug("guide restored", "provider", t.provider.Name(), "until", saved.Until)
+	}
+}
+
+// publish caches g if it is of the lineup there is now, and reports whether it
+// was. A fetch can outlast its lineup, through a Scan or a Disable, and its
+// guide would take the place of the current lineup's, such as one restored
+// when the tuner was enabled again: the check and the store go together.
+func (t *Tuner) publish(g *guide) bool {
+	t.storing.Lock()
+	defer t.storing.Unlock()
+	if g.lineup != t.lineup.Load() {
+		return false
+	}
+	t.guide.Store(g)
+	return true
+}
+
 // xmltv serves the TV guide of the whole lineup in XMLTV format, from the
 // cache keepFresh keeps filled: gathering a guide upstream can take minutes,
 // which Plex is not made to wait. Only a guide that is not at hand — before
-// the first fetch has finished, or after a Scan it has yet to follow — is
-// fetched on the spot.
+// the first fetch has finished, with none saved from before a restart, or
+// after a Scan it has yet to follow — is fetched on the spot.
 func (t *Tuner) xmltv(w http.ResponseWriter, r *http.Request) {
 	document, err := t.guideDocument(r.Context())
 	if err != nil {
@@ -117,9 +181,10 @@ func (t *Tuner) currentGuide() *guide {
 }
 
 // keepFresh keeps the guide fetched ahead of Plex asking for it: right away,
-// so a tuner fresh from a restart has one at hand, after every Scan, whose
-// lineup the guide follows, and on a schedule, so what is served stays ahead
-// of the clock. It runs until ctx ends, which is when the tuner is disabled.
+// so a tuner fresh from a restart has one of its own at hand, after every
+// Scan, whose lineup the guide follows, and on a schedule, so what is served
+// stays ahead of the clock. It runs until ctx ends, which is when the tuner is
+// disabled.
 //
 // A fetch that fails leaves the guide there was, which Plex is given rather
 // than nothing, and is tried again sooner: see guideRetry.
@@ -160,8 +225,8 @@ func (t *Tuner) keepFresh(ctx context.Context) {
 }
 
 // fetchGuide asks the provider for the programmes of the whole lineup,
-// renders the XMLTV document and caches it. The caller holds the t.fetching
-// token.
+// renders the XMLTV document and caches it, unless the lineup has moved on
+// meanwhile. The caller holds the t.fetching token.
 //
 // Channels are identified by their lineup number, so the guide and the lineup
 // always agree on which channel is which.
@@ -183,9 +248,10 @@ func (t *Tuner) fetchGuide(ctx context.Context) ([]byte, error) {
 		}
 	}
 
+	from := time.Now().Truncate(time.Hour)
+	until := from.Add(guideSpan)
 	if len(channels) > 0 {
-		from := time.Now().Truncate(time.Hour)
-		programmes, err := t.provider.Programmes(ctx, channels, from, from.Add(guideSpan))
+		programmes, err := t.provider.Programmes(ctx, channels, from, until)
 		if err != nil {
 			return nil, err
 		}
@@ -215,7 +281,16 @@ func (t *Tuner) fetchGuide(ctx context.Context) ([]byte, error) {
 	if err := encoder.Encode(tv); err != nil {
 		return nil, err
 	}
-	t.guide.Store(&guide{document: document.Bytes(), lineup: lineup, made: time.Now()})
 	slog.Debug("guide fetched", "provider", t.provider.Name(), "programmes", len(tv.Programmes), "took", since(began))
+	if !t.publish(&guide{document: document.Bytes(), lineup: lineup, made: time.Now()}) {
+		return document.Bytes(), nil // of a lineup that is gone
+	}
+	if lineup != nil {
+		// For a restart while the source is down: see restoreGuide.
+		saved := savedGuide{Document: document.Bytes(), Lineup: savedLineup(*lineup), Until: until}
+		if err := store.Put(t.db, guidesBucket, t.provider.Name(), saved); err != nil {
+			slog.Warn("guide not saved", "provider", t.provider.Name(), "err", err)
+		}
+	}
 	return document.Bytes(), nil
 }

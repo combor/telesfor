@@ -441,13 +441,13 @@ func TestOnAir(t *testing.T) {
 
 func TestStaticFiles(t *testing.T) {
 	server, _ := newUI(t)
-	r := get(t, server, "/ui/static/htmx-4.0.0.min.js")
+	r := get(t, server, "/ui/static/htmx-4.0.1.min.js")
 	if r.status != http.StatusOK || !strings.HasPrefix(r.header.Get("Content-Type"), "text/javascript") ||
 		r.header.Get("X-Content-Type-Options") != "nosniff" || !strings.Contains(r.body, "htmx") {
 		t.Fatalf("htmx = %d %v", r.status, r.header)
 	}
 	tag := r.header.Get("ETag")
-	if r := get(t, server, "/ui/static/htmx-4.0.0.min.js", "If-None-Match", tag); tag == "" || r.status != http.StatusNotModified {
+	if r := get(t, server, "/ui/static/htmx-4.0.1.min.js", "If-None-Match", tag); tag == "" || r.status != http.StatusNotModified {
 		t.Errorf("revalidating ETag %q = %d, want 304", tag, r.status)
 	}
 	for _, name := range []string{"style.css", "icon.svg"} {

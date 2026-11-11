@@ -6,7 +6,7 @@
 // It also serves the API, which lists the providers and enables or disables
 // them.
 //
-// static/htmx-4.0.0.min.js is dist/htmx.min.js from the htmx.org 4.0.0 npm
+// static/htmx-4.0.1.min.js is dist/htmx.min.js from the htmx.org 4.0.1 npm
 // package, under the Zero-Clause BSD license.
 package web
 

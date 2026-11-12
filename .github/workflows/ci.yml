@@ -226,6 +226,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Sign the image's build provenance with GitHub's attestation service.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -270,6 +273,13 @@ jobs:
           sbom: true
           # No cache-to: the smoke test has already written this tag's cache.
           cache-from: type=gha
+      # Anyone can check where the image came from with:
+      #   gh attestation verify oci://ghcr.io/combor/telesfor:TAG -R combor/telesfor
+      - name: Attest the image
+        uses: actions/attest@v4.2.2
+        with:
+          subject-name: ghcr.io/combor/telesfor
+          subject-digest: ${{ steps.build.outputs.digest }}
       - name: Verify the published image is public
         env:
           IMAGE: ghcr.io/combor/telesfor@${{ steps.build.outputs.digest }}

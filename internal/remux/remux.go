@@ -101,7 +101,20 @@ func (r *Remuxer) Copy(ctx context.Context, w io.Writer, s Stream) error {
 	if qualities := relay.qualities(ctx, s.Manifest); qualities != nil {
 		return r.play(ctx, w, s, relay, qualities)
 	}
-	return r.single(ctx, w, relay, local, "-live_start_index", strconv.Itoa(-headStart))
+	return r.single(ctx, w, relay, local, hls(-headStart)...)
+}
+
+// hls returns the options for ffmpeg's HLS reader to join a stream at a
+// segment: counted back from the newest if start is negative, and on from
+// the first otherwise.
+//
+// ffmpeg reads over loopback, where a connection for every request costs
+// nothing, so it keeps none open. With one kept open, the HLS reader of
+// ffmpeg 9.1 aborts on an assertion when a request over it fails and the
+// playlist ends right after, as it does where a leg is cut: the ffmpeg then
+// leaves the end of what it read unwritten.
+func hls(start int) []string {
+	return []string{"-live_start_index", strconv.Itoa(start), "-http_persistent", "0"}
 }
 
 // single remuxes a stream that has no qualities to choose from.
@@ -134,7 +147,7 @@ func (r *Remuxer) play(ctx context.Context, w io.Writer, s Stream, relay *relay,
 	st, err := openStage(relay, qualities, ctl, gauge, func(l *leg, input string) error {
 		ctx, stop := context.WithCancel(ctx)
 		// The stage has each leg begin with its first segment.
-		cmd := r.command(ctx, input, "-live_start_index", "0")
+		cmd := r.command(ctx, input, hls(0)...)
 		written, err := cmd.StdoutPipe()
 		if err == nil {
 			err = cmd.Start()

@@ -7,7 +7,7 @@ workflows:
         - 'actions/attest@v4.2.2'
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
-        - 'actions/setup-go@v7.0.0'
+        - 'actions/setup-go@v7.1.0'
         - 'cachix/install-nix-action@v31.11.4'
         - 'docker/build-push-action@v7.4.0'
         - 'docker/login-action@v4.8.0'
@@ -19,7 +19,7 @@ workflows:
         - 'zizmorcore/zizmor-action@v0.8.1'
     '.github/workflows/live.yml':
         - 'actions/checkout@v7.0.1'
-        - 'actions/setup-go@v7.0.0'
+        - 'actions/setup-go@v7.1.0'
     '.github/workflows/pages.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/deploy-pages@v5.0.1'
@@ -55,9 +55,9 @@ dependencies:
         commit: 'sha1-7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5'
         owner_id: 44036562
         repo_id: 192624594
-    'actions/setup-go@v7.0.0':
-        ref: 'v7.0.0'
-        commit: 'sha1-b7ad1dad31e06c5925ef5d2fc7ad053ef454303e'
+    'actions/setup-go@v7.1.0':
+        ref: 'v7.1.0'
+        commit: 'sha1-d8cbb8045d7f43706b9177cceb36c1f91a6644d5'
         owner_id: 44036562
         repo_id: 192624594
     'actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f':

@@ -200,7 +200,7 @@ jobs:
           umask 077
           printf '%s\n' "$RPM_GPG_PRIVATE_KEY" > "$RUNNER_TEMP/rpm-signing-private.asc"
       # GoReleaser uses nix-hash to generate the Nix package.
-      - uses: cachix/install-nix-action@v31.11.4
+      - uses: cachix/install-nix-action@v31.11.5
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7.3.0
         with:

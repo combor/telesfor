@@ -8,7 +8,7 @@ workflows:
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.1.0'
-        - 'cachix/install-nix-action@v31.11.4'
+        - 'cachix/install-nix-action@v31.11.5'
         - 'docker/build-push-action@v7.4.0'
         - 'docker/login-action@v4.8.0'
         - 'docker/metadata-action@v6.2.0'
@@ -72,9 +72,9 @@ dependencies:
         repo_id: 496012378
         uses:
             - 'actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f'
-    'cachix/install-nix-action@v31.11.4':
-        ref: 'v31.11.4'
-        commit: 'sha1-91f6a0f59e94dfb2cfed0f4000f36a68ead1d20c'
+    'cachix/install-nix-action@v31.11.5':
+        ref: 'v31.11.5'
+        commit: 'sha1-3dc140bfc76c49fbd4dd958429132e3746bcb086'
         owner_id: 36824654
         repo_id: 212301524
     'docker/build-push-action@v7.4.0':
